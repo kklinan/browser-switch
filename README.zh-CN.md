@@ -130,6 +130,34 @@ CGO_ENABLED=1 go build -ldflags="-s -w" -o browser-switch .
 
 > macOS 安全策略可能要求你在系统设置中确认一次默认浏览器变更，属正常现象。
 
+### 打包分发版本（DMG）
+
+```bash
+# 构建当前架构的 .app
+make app
+# 或指定架构（amd64 = Intel Mac x64，arm64 = Apple Silicon）
+make app-x64
+make app-arm64
+make app-universal     # lipo 合并的通用二进制，两种架构都能运行
+
+# 打包成拖拽安装的 DMG
+make dmg              # 当前架构
+make dmg-x64          # Intel (Mac x64)
+make dmg-arm64        # Apple Silicon
+make dmg-universal    # 通用包
+make all              # 一键编译全部三个版本的 DMG
+
+VERSION=1.2.0 make all  # 指定版本号
+```
+
+产物输出到 `dist/`：
+
+| 文件 | 适用 |
+|------|------|
+| `dist/BrowserSwitch-<版本>-amd64.dmg` | Intel Mac (x64) |
+| `dist/BrowserSwitch-<版本>-arm64.dmg` | Apple Silicon |
+| `dist/BrowserSwitch-<版本>-universal.dmg` | 两种架构通用 |
+
 ---
 
 ## 使用方法

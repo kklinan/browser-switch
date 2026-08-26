@@ -1,26 +1,49 @@
 #!/bin/bash
 # build-dmg.sh —— 生成可分发的 macOS 安装镜像（DMG）
-# 产出 `dist/BrowserSwitch-<version>.dmg`：打开后拖拽 App 到 Applications 即安装，
+# 产出 `dist/BrowserSwitch-<version>-<arch>.dmg`：打开后拖拽 App 到 Applications 即安装，
 # 与 Chrome / VS Code 等正式软件一致的体验。
+# 支持架构: amd64 / arm64 / universal（缺省 = 当前主机架构）
+# 用法:
+#   VERSION=1.0.0 ./scripts/build-dmg.sh            # 当前主机架构
+#   VERSION=1.0.0 ./scripts/build-dmg.sh amd64      # Intel (Mac x64)
+#   VERSION=1.0.0 ./scripts/build-dmg.sh arm64      # Apple Silicon (Mac ARM64)
+#   VERSION=1.0.0 ./scripts/build-dmg.sh universal  # 通用包
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
+# ---- 解析架构 ----
+ARCH_ARG="${1:-${ARCH:-auto}}"
+case "$ARCH_ARG" in
+  auto)
+    case "$(uname -m)" in
+      x86_64) GOARCH="amd64" ;;
+      arm64)  GOARCH="arm64" ;;
+      *) echo "不支持的主机架构: $(uname -m)"; exit 1 ;;
+    esac
+    ;;
+  x64|amd64|x86_64) GOARCH="amd64" ;;
+  arm64|aarch64)    GOARCH="arm64" ;;
+  universal|fat|both) GOARCH="universal" ;;
+  *) echo "未知架构: $ARCH_ARG（支持: amd64 / arm64 / universal）"; exit 1 ;;
+esac
+echo "==> 目标架构: $GOARCH"
+
 APP_NAME="Browser Switch"
 VOL_NAME="Browser Switch"
 VERSION="${VERSION:-1.0.0}"
 DIST_DIR="$ROOT_DIR/dist"
-APP_PATH="$DIST_DIR/$APP_NAME.app"
-DMG_PATH="$DIST_DIR/BrowserSwitch-$VERSION.dmg"
+APP_PATH="$DIST_DIR/$GOARCH/$APP_NAME.app"
+DMG_PATH="$DIST_DIR/BrowserSwitch-$VERSION-$GOARCH.dmg"
 STAGE_DIR="$DIST_DIR/dmg-stage"
 ICON="$ROOT_DIR/assets/BrowserSwitch.icns"
 
 # 1) 确保 .app 已构建
 if [[ ! -d "$APP_PATH" ]]; then
   echo "==> 未找到 ${APP_PATH}，先执行 build-app.sh"
-  "$SCRIPT_DIR/build-app.sh"
+  "$SCRIPT_DIR/build-app.sh" "$GOARCH"
 fi
 
 echo "==> 准备暂存目录"

@@ -130,6 +130,34 @@ CGO_ENABLED=1 go build -ldflags="-s -w" -o browser-switch .
 
 > macOS のセキュリティポリシーにより、デフォルトブラウザ変更をシステム設定で一度確認するよう求められる場合があります。正常な動作です。
 
+### 配布用 DMG のパッケージング
+
+```bash
+# 現在のアーキテクチャの .app をビルド
+make app
+# またはアーキテクチャを指定（amd64 = Intel Mac x64、arm64 = Apple Silicon）
+make app-x64
+make app-arm64
+make app-universal     # lipo で統合したユニバーサルバイナリ（両アーキテクチャ対応）
+
+# ドラッグ＆ドロップでインストールできる DMG をパッケージング
+make dmg              # 現在のアーキテクチャ
+make dmg-x64          # Intel (Mac x64)
+make dmg-arm64        # Apple Silicon
+make dmg-universal    # ユニバーサル
+make all              # 3 種類の DMG を一括ビルド
+
+VERSION=1.2.0 make all  # バージョン指定
+```
+
+出力先は `dist/`：
+
+| ファイル | 対象 |
+|------|------|
+| `dist/BrowserSwitch-<バージョン>-amd64.dmg` | Intel Mac (x64) |
+| `dist/BrowserSwitch-<バージョン>-arm64.dmg` | Apple Silicon |
+| `dist/BrowserSwitch-<バージョン>-universal.dmg` | 両アーキテクチャ対応 |
+
 ---
 
 ## 使い方

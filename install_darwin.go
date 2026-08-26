@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -173,6 +174,14 @@ func BuildAppBundle(appPath string) error {
 	if err != nil {
 		return fmt.Errorf("locate executable: %w", err)
 	}
+	// 构建期交叉打包：BP_BUNDLE_BIN 可显式指定要打包进 .app 的源二进制，
+	// 缺省为自身。跨架构打包时（如 Intel 主机打 arm64 包）目标二进制无法
+	// 在本机运行，需由本机架构的打包器配合该变量完成打包。
+	if src := os.Getenv("BP_BUNDLE_BIN"); src != "" {
+		if _, statErr := os.Stat(src); statErr == nil {
+			exe = src
+		}
+	}
 	if err := buildMainApp(appPath, exe); err != nil {
 		return fmt.Errorf("build bundle: %w", err)
 	}
@@ -268,11 +277,7 @@ func buildMainApp(appPath, srcExec string) error {
 
 	_ = os.RemoveAll(appPath)
 	macOSDir := filepath.Join(appPath, "Contents", "MacOS")
-	resourcesDir := filepath.Join(appPath, "Contents", "Resources")
 	if err := os.MkdirAll(macOSDir, 0755); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
 		return err
 	}
 	dstExec := filepath.Join(macOSDir, helperExecName)
@@ -281,11 +286,16 @@ func buildMainApp(appPath, srcExec string) error {
 	}
 	// 单 App：以主 App 身份注册，声明 http/https URL 类型（isBrowser=true），
 	// 使 macOS 通过 Apple Event 将 URL 投递给本进程。
+	// 图标（资源）仅在确实存在时写入；若无图标则完全不创建 Resources 目录，
+	// 避免空资源目录被 codesign seal 后校验时报 "code has no resources"。
 	iconSrc := getIconPath()
 	if iconSrc != "" && filepath.Ext(iconSrc) == ".icns" {
-		if err := copyFile(iconSrc, filepath.Join(resourcesDir, "AppIcon.icns"), 0644); err == nil {
-			plist := buildInfoPlistWithIcon(helperExecName, appBundleID, appName, true)
-			return os.WriteFile(filepath.Join(appPath, "Contents", "Info.plist"), []byte(plist), 0644)
+		resourcesDir := filepath.Join(appPath, "Contents", "Resources")
+		if err := os.MkdirAll(resourcesDir, 0755); err == nil {
+			if err := copyFile(iconSrc, filepath.Join(resourcesDir, "AppIcon.icns"), 0644); err == nil {
+				plist := buildInfoPlistWithIcon(helperExecName, appBundleID, appName, true)
+				return os.WriteFile(filepath.Join(appPath, "Contents", "Info.plist"), []byte(plist), 0644)
+			}
 		}
 	}
 	plist := buildInfoPlist(helperExecName, appBundleID, appName, true)
@@ -388,7 +398,12 @@ func buildInfoPlistWithIcon(execName, bundleID, name string, isBrowser bool) str
 
 func adhocSign(appPath string) {
 	_ = exec.Command("/usr/bin/xattr", "-dr", "com.apple.quarantine", appPath).Run()
+	// 先移除可能残留的旧签名，确保 --force 重签时 seal 一致
+	_ = exec.Command("/usr/bin/codesign", "--remove-signature", appPath).Run()
 	_ = exec.Command("/usr/bin/codesign", "--force", "--deep", "--sign", "-", appPath).Run()
+	// 等待签名 seal 落盘，避免紧接着校验时读到不一致状态
+	// （偶发的 "code has no resources but signature indicates they must be present"）
+	time.Sleep(500 * time.Millisecond)
 }
 
 func registerWithLaunchServices(appPath string) {

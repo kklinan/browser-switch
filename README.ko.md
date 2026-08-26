@@ -130,6 +130,34 @@ CGO_ENABLED=1 go build -ldflags="-s -w" -o browser-switch .
 
 > macOS 보안 정책상 기본 브라우저 변경을 시스템 설정에서 한 번 확인하라는 요청이 나올 수 있습니다. 정상적인 동작입니다.
 
+### 배포용 DMG 패키징
+
+```bash
+# 현재 아키텍처의 .app 빌드
+make app
+# 또는 아키텍처 지정(amd64 = Intel Mac x64, arm64 = Apple Silicon)
+make app-x64
+make app-arm64
+make app-universal     # lipo 병합 유니버설 바이너리(두 아키텍처 모두 실행 가능)
+
+# 드래그 앤 드롭 설치용 DMG 패키징
+make dmg              # 현재 아키텍처
+make dmg-x64          # Intel (Mac x64)
+make dmg-arm64        # Apple Silicon
+make dmg-universal    # 유니버설
+make all              # 3개 DMG 한 번에 빌드
+
+VERSION=1.2.0 make all  # 버전 지정
+```
+
+출력은 `dist/`에 저장됩니다:
+
+| 파일 | 대상 |
+|------|------|
+| `dist/BrowserSwitch-<버전>-amd64.dmg` | Intel Mac (x64) |
+| `dist/BrowserSwitch-<버전>-arm64.dmg` | Apple Silicon |
+| `dist/BrowserSwitch-<버전>-universal.dmg` | 두 아키텍처 모두 |
+
 ---
 
 ## 사용법

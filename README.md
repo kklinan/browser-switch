@@ -130,6 +130,34 @@ CGO_ENABLED=1 go build -ldflags="-s -w" -o browser-switch .
 
 > macOS security policy may ask you to confirm the default-browser change once in System Settings. This is expected.
 
+### Package distributable DMGs
+
+```bash
+# Build the .app bundle for the current architecture
+make app
+# Or for a specific architecture (amd64 = Intel Mac x64, arm64 = Apple Silicon)
+make app-x64
+make app-arm64
+make app-universal     # universal binary (lipo), runs on both architectures
+
+# Package a drag-and-drop installer DMG
+make dmg              # current architecture
+make dmg-x64          # Intel (Mac x64)
+make dmg-arm64        # Apple Silicon
+make dmg-universal    # universal
+make all              # build all three DMGs at once
+
+VERSION=1.2.0 make all  # tag a specific version
+```
+
+Outputs land in `dist/`:
+
+| File | Runs on |
+|------|---------|
+| `dist/BrowserSwitch-<version>-amd64.dmg` | Intel Mac (x64) |
+| `dist/BrowserSwitch-<version>-arm64.dmg` | Apple Silicon |
+| `dist/BrowserSwitch-<version>-universal.dmg` | both architectures |
+
 ---
 
 ## Usage
