@@ -1,0 +1,19 @@
+Browser Switch
+Copyright 2026 Browser Switch contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+---
+
+Third-party components
+
+This project links the following open-source Go modules at build time.
+Their respective licenses apply to those components; see each module's
+repository for the full text.
+
+  - fyne.io/fyne/v2        BSD-3-Clause   (GUI toolkit)
+
+At runtime the app shells out to built-in macOS command-line tools
+(plutil, sips, open, codesign, xattr, lsregister) and links the macOS
+system frameworks CoreServices, CoreFoundation, and Carbon via cgo.
+These are part of macOS and are not redistributed with this project.
