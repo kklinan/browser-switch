@@ -212,7 +212,7 @@ Profiles are launched by executing the browser binary directly with `--profile-d
 
 ## Configuration
 
-Config file: `~/.config/browser-picker/config.json` (auto-created on first run with detected browsers).
+Config file: `~/.config/browser-switch/config.json` (auto-created on first run with detected browsers).
 
 ```json
 {
@@ -301,8 +301,8 @@ go vet ./...
 
 ```bash
 ./browser-switch --uninstall     # restore the previous default browser + delete ~/Applications/Browser Switch.app
-rm -rf ~/.config/browser-picker  # remove config
-rm -rf /tmp/browser-picker-icons # remove the icon cache
+rm -rf ~/.config/browser-switch  # remove config
+rm -rf /tmp/browser-switch-icons # remove the icon cache
 ```
 
 ---
@@ -344,7 +344,7 @@ Any app that declares an `http`/`https` handler in its `Info.plist` is detected 
 No. If no rule matches and you walk away, the countdown opens your default browser automatically.
 
 **Where is the config stored?**
-`~/.config/browser-picker/config.json`. It's plain JSON you can edit or sync across machines.
+`~/.config/browser-switch/config.json`. It's plain JSON you can edit or sync across machines.
 
 ---
 

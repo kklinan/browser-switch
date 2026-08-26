@@ -1,0 +1,10 @@
+# 构建产物
+browser-switch
+dist/
+*.o
+*.a
+*.so
+vendor/
+
+# macOS
+.DS_Store

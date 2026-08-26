@@ -27,8 +27,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tray_icon`, `window_width`, `window_height`, and several unused helpers).
 
 ### Fixed
-- `.gitignore` now ignores the current binary name `browser-switch` (previously
-  the stale pre-rename `browser-picker`) plus `dist/` and `.DS_Store`.
+- `.gitignore` now ignores the current binary name `browser-switch` (the stale
+  pre-rename binary name) plus `dist/` and `.DS_Store`.
 
 ## [1.0.0]
 

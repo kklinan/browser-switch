@@ -33,7 +33,7 @@ of its own. Points worth keeping in mind when assessing impact:
 
 - The app is **ad-hoc signed and not Apple-notarized** (see ISSUES I-26).
   Gatekeeper may prompt on first launch; this is expected, not a vulnerability.
-- Config is plain JSON at `~/.config/browser-picker/config.json`. Rules can
+- Config is plain JSON at `~/.config/browser-switch/config.json`. Rules can
   contain user-authored regular expressions that are compiled at match time.
 - The app shells out to built-in macOS tools (`open`, `plutil`, `sips`,
   `codesign`, `xattr`, `lsregister`). Reports about argument handling around

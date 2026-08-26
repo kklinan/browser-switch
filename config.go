@@ -169,7 +169,7 @@ func DefaultConfig() *Config {
 
 func ConfigDir() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "browser-picker")
+	return filepath.Join(home, ".config", "browser-switch")
 }
 
 func InitConfig() (*Config, error) {

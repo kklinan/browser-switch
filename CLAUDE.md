@@ -45,7 +45,7 @@ go vet ./...
 
 `make build` / `test` / `vet` / `app` / `dmg` / `clean` 均已定义；`make deps` **未定义**，别照抄。
 
-配置文件：`~/.config/browser-picker/config.json`（注意目录名是 `browser-picker`，不是 `browser-switch`——历史遗留）。
+配置文件：`~/.config/browser-switch/config.json`。
 
 ---
 
@@ -195,8 +195,8 @@ done
 | `./browser-switch --install` | 修改系统默认浏览器；在 `~/Applications` 写入 `.app` |
 | `./browser-switch --uninstall` | 修改系统默认浏览器；删除 `~/Applications/Browser Switch.app` |
 | 设置界面「将其他浏览器设为系统默认」 | 直接调用 `LSSetDefaultHandlerForURLScheme` |
-| 修改 `~/.config/browser-picker/config.json` | 覆盖用户规则；`SaveConfig` 非原子写，中断会损坏配置 |
-| `rm -rf /tmp/browser-picker-icons` | 清除图标缓存（可重建，风险低） |
+| 修改 `~/.config/browser-switch/config.json` | 覆盖用户规则；`SaveConfig` 非原子写，中断会损坏配置 |
+| `rm -rf /tmp/browser-switch-icons` | 清除图标缓存（可重建，风险低） |
 | 任何 `git commit` / `git push` / `git reset --hard` | 用户未主动要求时**不得执行** |
 
 ---

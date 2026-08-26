@@ -237,7 +237,7 @@ shortcutActions[i] = func() { open(b, rememberChk.Checked) }
 - 没有 `Enabled` 开关
 - 没有编辑入口，改一个字符也得删了重建
 
-用户唯一的选择是手工编辑 `~/.config/browser-picker/config.json`。
+用户唯一的选择是手工编辑 `~/.config/browser-switch/config.json`。
 
 **建议**：规则行加 `Enabled` 开关 + 点击行进入编辑对话框（复用 `showAddRuleDialog` 的表单，传入已有 `Rule`）。
 
@@ -390,9 +390,9 @@ build:
 
 ### I-21 · 25MB 编译产物被 git 跟踪（已解决）
 
-> **✅ 已修复**：核实 `browser-switch` 二进制实际**未被 git 跟踪**（`git ls-files` 无记录），无需 `git rm --cached`。`.gitignore` 已把重命名前的旧名 `browser-picker` 更新为 `browser-switch`，并补充 `dist/`、`.DS_Store`。
+> **✅ 已修复**：核实 `browser-switch` 二进制实际**未被 git 跟踪**（`git ls-files` 无记录），无需 `git rm --cached`。`.gitignore` 已把重命名前的旧二进制名更新为 `browser-switch`，并补充 `dist/`、`.DS_Store`。
 
-`browser-switch`（约 25 MB）曾被担心进入版本控制；`.gitignore` 里当时写的是 `browser-picker`——那是重命名前的旧二进制名，重命名后没同步更新。
+`browser-switch`（约 25 MB）曾被担心进入版本控制；`.gitignore` 里当时写的是重命名前的旧二进制名，重命名后没同步更新。
 
 每次编译都会产生一个巨大的二进制 diff，仓库会迅速膨胀。
 

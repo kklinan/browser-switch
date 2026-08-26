@@ -212,7 +212,7 @@ Browser Switch는 각 브라우저에 구성된 프로필을 읽어옵니다.
 
 ## 설정
 
-설정 파일: `~/.config/browser-picker/config.json`(최초 실행 시 감지된 브라우저와 함께 자동 생성).
+설정 파일: `~/.config/browser-switch/config.json`(최초 실행 시 감지된 브라우저와 함께 자동 생성).
 
 ```json
 {
@@ -301,8 +301,8 @@ go vet ./...
 
 ```bash
 ./browser-switch --uninstall     # 이전 기본 브라우저 복원 + ~/Applications/Browser Switch.app 삭제
-rm -rf ~/.config/browser-picker  # 설정 삭제
-rm -rf /tmp/browser-picker-icons # 아이콘 캐시 삭제
+rm -rf ~/.config/browser-switch  # 설정 삭제
+rm -rf /tmp/browser-switch-icons # 아이콘 캐시 삭제
 ```
 
 ---
@@ -344,7 +344,7 @@ Browser Switch를 기본 브라우저로 설치한 뒤 도메인을 브라우저
 아니요. 규칙에 일치하지 않고 자리를 비워도 카운트다운이 자동으로 기본 브라우저로 엽니다.
 
 **설정은 어디에 저장되나요?**
-`~/.config/browser-picker/config.json`. 편집 가능하고 기기 간 동기화도 되는 순수 JSON입니다.
+`~/.config/browser-switch/config.json`. 편집 가능하고 기기 간 동기화도 되는 순수 JSON입니다.
 
 ---
 

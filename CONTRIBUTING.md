@@ -27,8 +27,7 @@ make test         # go test ./...
 make vet          # go vet ./...
 ```
 
-Config lives at `~/.config/browser-picker/config.json` (the directory name is
-`browser-picker` for historical reasons — do not "fix" it).
+Config lives at `~/.config/browser-switch/config.json`.
 
 ## Making changes
 

@@ -212,7 +212,7 @@ Browser Switch 读取你在各浏览器中配置好的账户：
 
 ## 配置
 
-配置文件：`~/.config/browser-picker/config.json`（首次运行自动创建并检测浏览器）。
+配置文件：`~/.config/browser-switch/config.json`（首次运行自动创建并检测浏览器）。
 
 ```json
 {
@@ -301,8 +301,8 @@ go vet ./...
 
 ```bash
 ./browser-switch --uninstall     # 还原原默认浏览器 + 删除 ~/Applications/Browser Switch.app
-rm -rf ~/.config/browser-picker  # 删除配置
-rm -rf /tmp/browser-picker-icons # 删除图标缓存
+rm -rf ~/.config/browser-switch  # 删除配置
+rm -rf /tmp/browser-switch-icons # 删除图标缓存
 ```
 
 ---
@@ -344,7 +344,7 @@ Browser Switch 的生态位：**Finicky 的规则能力 + Browserosaurus 的 GUI
 不会。若无规则命中而你恰好走开，倒计时会自动用默认浏览器打开。
 
 **配置存在哪里？**
-`~/.config/browser-picker/config.json`。是可编辑、可跨机同步的纯 JSON。
+`~/.config/browser-switch/config.json`。是可编辑、可跨机同步的纯 JSON。
 
 ---
 

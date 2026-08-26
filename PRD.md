@@ -210,7 +210,7 @@ Browser Switch 是一款 macOS 桌面工具。注册为系统默认浏览器后�
 ### F10. 浏览器图标
 
 - 读取浏览器 `.app` 的 `CFBundleIconFile`，定位 `Contents/Resources/*.icns`
-- `sips -s format png -Z 128` 转 PNG，缓存到 `/tmp/browser-picker-icons/<bundleID>.png`
+- `sips -s format png -Z 128` 转 PNG，缓存到 `/tmp/browser-switch-icons/<bundleID>.png`
 - 已缓存（文件存在且非空）时直接复用，**不做失效判断**
 - 取不到图标时使用首字母头像兜底（蓝色圆底 + 白色大写首字母）
 - 使用尺寸：选择器卡片 52px、收藏列表 22px、全部列表 26px
@@ -248,7 +248,7 @@ Browser Switch 是一款 macOS 桌面工具。注册为系统默认浏览器后�
 | **CGO** | **必须开启**。CoreServices（默认浏览器读写）+ Carbon（Apple Event 接收）+ CoreFoundation |
 | **外部命令依赖** | `plutil`、`sips`、`open`、`codesign`、`xattr`、`lsregister`（均为 macOS 内置） |
 | **线程模型** | `init()` 中 `runtime.LockOSThread()`；后台 goroutine 通过 `fyne.Do()` 回主线程更新 UI；`atomic.Bool`/`atomic.Int32` 保护一次性动作 |
-| **配置持久化** | `~/.config/browser-picker/config.json`，`json.MarshalIndent` + `os.WriteFile`（非原子写），`sync.RWMutex` 保护写入 |
+| **配置持久化** | `~/.config/browser-switch/config.json`，`json.MarshalIndent` + `os.WriteFile`（非原子写），`sync.RWMutex` 保护写入 |
 | **进程模型** | 非常驻。每次链接点击 = 一次冷启动，处理完退出 |
 | **签名** | 仅 ad-hoc 签名，未经 Apple 公证 |
 | **权限** | 设置默认浏览器可能需用户在「系统设置」中手动确认（macOS 安全策略） |

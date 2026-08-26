@@ -212,7 +212,7 @@ Browser Switch は各ブラウザで設定済みのプロファイルを読み�
 
 ## 設定
 
-設定ファイル：`~/.config/browser-picker/config.json`（初回起動時に検出済みブラウザとともに自動生成）。
+設定ファイル：`~/.config/browser-switch/config.json`（初回起動時に検出済みブラウザとともに自動生成）。
 
 ```json
 {
@@ -301,8 +301,8 @@ go vet ./...
 
 ```bash
 ./browser-switch --uninstall     # 以前のデフォルトブラウザを復元 + ~/Applications/Browser Switch.app を削除
-rm -rf ~/.config/browser-picker  # 設定を削除
-rm -rf /tmp/browser-picker-icons # アイコンキャッシュを削除
+rm -rf ~/.config/browser-switch  # 設定を削除
+rm -rf /tmp/browser-switch-icons # アイコンキャッシュを削除
 ```
 
 ---
@@ -344,7 +344,7 @@ Browser Switch をデフォルトブラウザとしてインストールし、�
 ありません。ルールに一致せず離席しても、カウントダウンが自動的にデフォルトブラウザで開きます。
 
 **設定はどこに保存されますか？**
-`~/.config/browser-picker/config.json`。編集可能でマシン間同期もできるプレーンな JSON です。
+`~/.config/browser-switch/config.json`。編集可能でマシン間同期もできるプレーンな JSON です。
 
 ---
 

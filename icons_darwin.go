@@ -15,7 +15,7 @@ func browserIconPath(b Browser) string {
 	if appPath == "" || !strings.HasSuffix(appPath, ".app") {
 		return ""
 	}
-	cache := filepath.Join(os.TempDir(), "browser-picker-icons")
+	cache := filepath.Join(os.TempDir(), "browser-switch-icons")
 	_ = os.MkdirAll(cache, 0755)
 	out := filepath.Join(cache, strings.ReplaceAll(b.ID, "/", "_")+".png")
 	if fi, err := os.Stat(out); err == nil && fi.Size() > 0 {
