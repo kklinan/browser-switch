@@ -97,7 +97,7 @@ func runAppModeGUI(cfg *Config) {
 		}
 		master.SetContent(buildSettingsContent(a, cfg, master))
 		master.SetTitle(i18n.T("settings.window_title"))
-		master.Resize(fyne.NewSize(760, 560))
+		master.Resize(fyne.NewSize(840, 600))
 		master.CenterOnScreen()
 		master.Show() // 关闭即退出进程（master 是唯一窗口）
 	}

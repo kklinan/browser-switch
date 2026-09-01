@@ -148,9 +148,9 @@ func runningAppBundlePath() string {
 	if resolved, e := filepath.EvalSymlinks(exe); e == nil {
 		exe = resolved
 	}
-	macOSDir := filepath.Dir(exe)          // .../Contents/MacOS
-	contentsDir := filepath.Dir(macOSDir)  // .../Contents
-	appDir := filepath.Dir(contentsDir)    // .../XXX.app
+	macOSDir := filepath.Dir(exe)         // .../Contents/MacOS
+	contentsDir := filepath.Dir(macOSDir) // .../Contents
+	appDir := filepath.Dir(contentsDir)   // .../XXX.app
 	if filepath.Base(macOSDir) == "MacOS" && filepath.Base(contentsDir) == "Contents" && strings.HasSuffix(appDir, ".app") {
 		return appDir
 	}

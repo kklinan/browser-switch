@@ -39,9 +39,9 @@ func TestSuggestMatchMode(t *testing.T) {
 		{"example.com", MatchExact},
 		{"*.example.com", MatchWildcard},
 		{"example.?om", MatchWildcard},
-		{`.*\.test\..*`, MatchRegex},   // 含转义 → 正则优先，即便有 *
-		{`(a|b).com`, MatchRegex},      // 含分组和择一
-		{`[a-z]+\.com`, MatchRegex},    // 含字符组
+		{`.*\.test\..*`, MatchRegex}, // 含转义 → 正则优先，即便有 *
+		{`(a|b).com`, MatchRegex},    // 含分组和择一
+		{`[a-z]+\.com`, MatchRegex},  // 含字符组
 		{"plain-text", MatchExact},
 	}
 	for _, c := range cases {

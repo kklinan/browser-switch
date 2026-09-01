@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image/color"
 	"os"
 	"runtime"
 	"strings"
@@ -27,6 +28,8 @@ func init() {
 func main() {
 	// 初始化国际化语言包（必须在任何 i18n.T() 调用之前）
 	i18n.Init()
+	// 同步 macOS 系统强调色（必须在任何界面构建之前，颜色只在此刻解析一次）
+	syncAccentColor()
 
 	var (
 		installFlag   bool
@@ -130,9 +133,11 @@ func main() {
 		}
 		fmt.Printf(i18n.T("cli.output.detected_browsers"), len(browsers))
 		for _, b := range browsers {
+			// 默认浏览器用 ASCII 星号标记：emoji 在管道/重定向里编码不一致，
+			// 且不同终端字体宽度不同会破坏列对齐。
 			marker := "  "
 			if b.ID == cfg.DefaultBrowser {
-				marker = "⭐"
+				marker = " *"
 			}
 			fmt.Printf("%s %-22s %s\n", marker, b.Name, b.Exec)
 		}
@@ -278,129 +283,133 @@ func RunInstallerUI() {
 
 	content := BuildInstallerUI(a, w)
 	w.SetContent(content)
-	w.Resize(fyne.NewSize(600, 520))
+	w.Resize(fyne.NewSize(560, 700))
 	w.CenterOnScreen()
 	w.ShowAndRun()
 }
 
 // BuildInstallerUI 构建安装器 UI
 func BuildInstallerUI(a fyne.App, w fyne.Window) fyne.CanvasObject {
-	fg := tcol(theme.ColorNameForeground)
-	subtle := tcol(theme.ColorNamePlaceHolder)
-
-	// 标题区域
-	titleIcon := canvas.NewText("🚀", accent)
-	titleIcon.TextSize = 48
-	titleIcon.Alignment = fyne.TextAlignCenter
-	appName := boldText(i18n.T("app.full_name"), 28, accent)
-	versionText := plainText(i18n.T("app.version"), 14, subtle)
+	// 标题区：应用名 + 版本 + 一句标语。图标用矢量资源而非 emoji ——
+	// emoji 在不同平台上字形不同，会立刻暴露「这不是原生应用」。
+	appName := boldText(i18n.T("app.full_name"), fsDisplay, fgCol())
+	appName.Alignment = fyne.TextAlignCenter
+	versionText := plainText(i18n.T("app.version"), fsSubhead, secCol())
 	versionText.Alignment = fyne.TextAlignCenter
+	tagline := plainText(i18n.T("installer.tagline"), fsBody, secCol())
+	tagline.Alignment = fyne.TextAlignCenter
+
+	appIcon := canvas.NewImageFromResource(theme.NewThemedResource(theme.ComputerIcon()))
+	appIcon.FillMode = canvas.ImageFillContain
+	appIcon.SetMinSize(fyne.NewSize(64, 64))
 
 	titleArea := container.NewVBox(
-		container.NewCenter(titleIcon),
-		vSpace(10),
+		container.NewCenter(appIcon),
+		vSpace(sp12),
 		container.NewCenter(appName),
+		vSpace(sp2),
 		container.NewCenter(versionText),
-		vSpace(8),
+		vSpace(sp8),
+		container.NewCenter(tagline),
 	)
 
-	// 描述
-	descLabel := plainText(i18n.T("installer.tagline"), 14, fg)
-	descLabel.Alignment = fyne.TextAlignLeading
-
-	descArea := container.NewPadded(container.NewBorder(nil, nil, descLabel, nil))
-
-	// 功能列表
+	// 功能列表：每项一行「图标 + 标题 / 说明」，行间发丝线。
 	features := []struct {
 		name        string
 		description string
-		icon        string
+		icon        fyne.Resource
 	}{
-		{i18n.T("installer.features.smart_rules.name"), i18n.T("installer.features.smart_rules.desc"), "✅"},
-		{i18n.T("installer.features.multi_profile.name"), i18n.T("installer.features.multi_profile.desc"), "👥"},
-		{i18n.T("installer.features.custom_rules.name"), i18n.T("installer.features.custom_rules.desc"), "⚡"},
-		{i18n.T("installer.features.countdown.name"), i18n.T("installer.features.countdown.desc"), "⏱️"},
+		{i18n.T("installer.features.smart_rules.name"), i18n.T("installer.features.smart_rules.desc"), theme.ConfirmIcon()},
+		{i18n.T("installer.features.multi_profile.name"), i18n.T("installer.features.multi_profile.desc"), theme.AccountIcon()},
+		{i18n.T("installer.features.custom_rules.name"), i18n.T("installer.features.custom_rules.desc"), theme.ListIcon()},
+		{i18n.T("installer.features.countdown.name"), i18n.T("installer.features.countdown.desc"), theme.HistoryIcon()},
 	}
 
-	featuresBox := container.NewVBox(boldText(i18n.T("installer.core_features"), 14, fg), vSpace(6))
+	featureRows := container.NewVBox()
 	for _, feat := range features {
-		row := container.NewHBox(
-			plainText(feat.icon, 16, accent),
-			hSpace(8),
+		row := container.NewBorder(nil, nil,
+			container.NewHBox(widget.NewIcon(feat.icon), hSpace(sp12)),
+			nil,
 			container.NewVBox(
-				plainText(feat.name, 13, fg),
-				plainText(feat.description, 11, subtle),
+				plainText(feat.name, fsBody, fgCol()),
+				vSpace(sp2),
+				plainText(feat.description, fsCaption, secCol()),
 			),
 		)
-		featuresBox.Add(container.NewPadded(row))
+		featureRows.Add(listRow(row, sp20))
 	}
-	featuresArea := container.NewPadded(container.NewBorder(nil, nil, featuresBox, nil))
-
-	// 当前状态
-	statusBox := buildStatusPanel(w)
-
-	// 操作按钮
-	actionBtns := container.NewGridWithColumns(2,
-		widget.NewButtonWithIcon(i18n.T("installer.btn.install"), theme.ContentAddIcon(), func() {
-			handleInstall(w)
-		}),
-		widget.NewButtonWithIcon(i18n.T("installer.btn.set_default"), theme.SettingsIcon(), func() {
-			handleSetDefault(w)
-		}),
+	featuresArea := container.NewVBox(
+		inset(boldText(i18n.T("installer.core_features"), fsTitle, fgCol()), sp20),
+		vSpace(sp4),
+		featureRows,
 	)
 
-	// 主布局
+	// 当前状态
+	statusBox := buildStatusPanel()
+
+	// 操作按钮：主操作高亮（系统强调色），次操作常规。
+	installBtn := widget.NewButton(i18n.T("installer.btn.install"), func() { handleInstall(w) })
+	installBtn.Importance = widget.HighImportance
+	setDefaultBtn := widget.NewButton(i18n.T("installer.btn.set_default"), func() { handleSetDefault(w) })
+	actionBtns := container.NewHBox(installBtn, setDefaultBtn)
+
+	// 主布局：内容纵向排列，底部留白由 Spacer 吸收，避免拉伸控件。
 	return container.NewVBox(
+		vSpace(sp24),
 		titleArea,
-		container.NewBorder(nil, nil, descArea, nil),
-		vSpace(12),
+		vSpace(sp20),
 		featuresArea,
-		vSpace(12),
+		vSpace(sp20),
 		statusBox,
-		vSpace(12),
+		vSpace(sp20),
 		container.NewCenter(actionBtns),
+		vSpace(sp24),
 		layout.NewSpacer(),
 	)
 }
 
-func buildStatusPanel(w fyne.Window) fyne.CanvasObject {
-	fg := tcol(theme.ColorNameForeground)
-
+// buildStatusPanel 显示「是否已安装 / 当前默认浏览器」两行状态。
+func buildStatusPanel() fyne.CanvasObject {
 	info, err := GetInstallInfo()
 	if err != nil {
-		return plainText(fmt.Sprintf(i18n.T("installer.status.fetch_failed"), err), 13, fg)
+		return inset(plainText(fmt.Sprintf(i18n.T("installer.status.fetch_failed"), err), fsBody, fgCol()), sp20)
 	}
 
-	statusIcon := "🟡"
+	// 状态点用矢量圆而非 emoji 圆点：颜色取系统绿/黄，深浅模式都清晰。
+	dot := sysGray.get()
 	statusText := i18n.T("common.not_installed")
 	if info.Installed {
-		statusIcon = "✅"
+		dot = sysGreen.get()
 		statusText = i18n.T("common.installed")
 	}
 
 	currentDefault := i18n.T("common.unknown")
 	if isDef, cur := CheckDefaultBrowser(); isDef {
-		currentDefault = "BrowserSwitch"
+		currentDefault = i18n.T("app.name")
 	} else if cur != "" && cur != "com.apple.safari" {
 		currentDefault = cur
 	} else {
 		currentDefault = i18n.T("installer.status.safari_default")
 	}
 
-	return container.NewBorder(
-		nil, nil,
-		container.NewVBox(
-			boldText(i18n.T("installer.current_status"), 14, fg),
-			vSpace(6),
-			container.NewHBox(
-				plainText(statusIcon+" ", 14, accent),
-				plainText(fmt.Sprintf(i18n.T("installer.status.install"), statusText), 13, fg),
+	statusRow := func(c color.Color, text string) fyne.CanvasObject {
+		return container.NewHBox(
+			container.NewCenter(circle(c, 8)),
+			hSpace(sp8),
+			plainText(text, fsBody, fgCol()),
+		)
+	}
+
+	return container.NewVBox(
+		inset(boldText(i18n.T("installer.current_status"), fsTitle, fgCol()), sp20),
+		vSpace(sp8),
+		container.NewBorder(nil, nil, hSpace(sp20), hSpace(sp20),
+			container.NewVBox(
+				statusRow(dot, fmt.Sprintf(i18n.T("installer.status.install"), statusText)),
+				vSpace(sp8),
+				statusRow(accent().get(), fmt.Sprintf(i18n.T("installer.status.default_browser"), currentDefault)),
 			),
-			container.NewHBox(
-				plainText("🔗 ", 14, accent),
-				plainText(fmt.Sprintf(i18n.T("installer.status.default_browser"), currentDefault), 13, fg),
-			),
-		), nil,
+		),
 	)
 }
 
