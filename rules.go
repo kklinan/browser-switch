@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+
+	"github.com/kklinan/browser-switch/i18n"
 )
 
 // MatchResult represents the result of matching a URL against rules
@@ -67,16 +70,33 @@ func MatchURL(rawURL string, cfg *Config) MatchResult {
 	}
 }
 
-// matchPattern checks if a host/URL matches a pattern using the specified mode
+// matchPattern checks if a host/URL matches a pattern using the specified mode.
+//
+// contains / prefix / suffix 是 wildcard 的"快捷方式"：除 host 外也会对完整 URL
+// 尝试，这样小白用户写 ".pdf"、"https://"、"login" 这类非域名内容也能命中
+// （只看 host 的话这些规则永远不生效）。
 func matchPattern(host, fullURL, pattern string, mode MatchMode) bool {
+	// 统一小写：调用方（MatchURL）通常已归一化，这里再做一次是幂等的，
+	// 可避免新的调用点忘记归一化时静默匹配失败。
+	host = strings.ToLower(host)
+	fullURL = strings.ToLower(fullURL)
 	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	if pattern == "" {
+		return false
+	}
 
 	switch mode {
 	case MatchExact:
 		return host == pattern
 
+	case MatchURLEqual:
+		// 完整 URL 完全相等：包含 scheme/path/query/fragment。
+		return fullURL == pattern
+
 	case MatchWildcard:
-		return matchWildcard(host, pattern)
+		// 同时对 host 与完整 URL 尝试：只匹配 host 的话，
+		// 像 "*github.com/*"、"https://*"、"*/settings" 这类含路径的写法永远命中不了。
+		return matchWildcard(host, pattern) || matchWildcard(fullURL, pattern)
 
 	case MatchRegex:
 		re, err := regexp.Compile(pattern)
@@ -90,19 +110,35 @@ func matchPattern(host, fullURL, pattern string, mode MatchMode) bool {
 		return strings.Contains(host, pattern) || strings.Contains(fullURL, pattern)
 
 	case MatchPrefix:
-		return strings.HasPrefix(host, pattern)
+		return strings.HasPrefix(host, pattern) || strings.HasPrefix(fullURL, pattern)
 
 	case MatchSuffix:
-		return strings.HasSuffix(host, pattern)
+		return strings.HasSuffix(host, pattern) || strings.HasSuffix(fullURL, pattern)
 
 	default:
 		return false
 	}
 }
 
-// matchWildcard implements wildcard pattern matching
+// matchWildcard implements wildcard pattern matching against a single target.
 // Supports: * (any sequence), ? (single char)
-func matchWildcard(host, pattern string) bool {
+func matchWildcard(target, pattern string) bool {
+	re, err := wildcardRegexp(pattern)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(target)
+}
+
+// wildcardCache 缓存 pattern → 编译后的正则。规则匹配在每次打开链接时都会跑，
+// 逐条重新编译属于纯浪费，尤其正则/通配稍多时。
+var wildcardCache sync.Map // map[string]*regexp.Regexp
+
+// wildcardRegexp 把通配 pattern 编译成正则（带缓存）。
+func wildcardRegexp(pattern string) (*regexp.Regexp, error) {
+	if re, ok := wildcardCache.Load(pattern); ok {
+		return re.(*regexp.Regexp), nil
+	}
 	// Convert wildcard pattern to regex
 	regexStr := "^"
 	for i := 0; i < len(pattern); i++ {
@@ -122,9 +158,10 @@ func matchWildcard(host, pattern string) bool {
 
 	re, err := regexp.Compile(regexStr)
 	if err != nil {
-		return false
+		return nil, err
 	}
-	return re.MatchString(host)
+	wildcardCache.Store(pattern, re)
+	return re, nil
 }
 
 // findBrowserByID finds a browser in the config by its ID
@@ -149,11 +186,66 @@ func ValidatePattern(pattern string, mode MatchMode) error {
 			return fmt.Errorf("invalid regex: %w", err)
 		}
 	case MatchWildcard:
-		// Wildcards are always valid syntactically
-	case MatchExact, MatchContains, MatchPrefix, MatchSuffix:
+		// 通配语法本身没有非法形式，但仍编译一次以确保转换后的正则可用。
+		if _, err := wildcardRegexp(pattern); err != nil {
+			return fmt.Errorf("invalid wildcard: %w", err)
+		}
+	case MatchExact, MatchURLEqual, MatchContains, MatchPrefix, MatchSuffix:
 		// All valid
 	}
 
+	return nil
+}
+
+// ValidateRuleInput 在保存规则前做一次"面向用户"的语义校验，返回可直接展示的错误。
+// 它与 ValidatePattern 的分工：后者只保证语法可编译，这里额外捕捉
+// "语法没问题但语义明显写错、保存后一定不生效"的情况。
+//
+// browserID 参与重复检测；excludeID 用于编辑场景排除规则自身，避免把自己判成重复。
+func ValidateRuleInput(pattern string, mode MatchMode, browserID string, rules []Rule, excludeID string) error {
+	p := strings.TrimSpace(pattern)
+	if p == "" {
+		return fmt.Errorf(i18n.T("settings.add_rule.error.empty_pattern"))
+	}
+
+	if err := ValidatePattern(p, mode); err != nil {
+		if mode == MatchRegex {
+			return fmt.Errorf(i18n.T("settings.add_rule.error.invalid_regex"), err)
+		}
+		return err
+	}
+
+	switch mode {
+	case MatchURLEqual:
+		if !strings.Contains(p, "://") {
+			return fmt.Errorf(i18n.T("settings.add_rule.error.urlequal_need_scheme"))
+		}
+	case MatchExact:
+		// 域名里不可能出现 scheme 或路径分隔符，出现说明用户想要的是别的模式。
+		if strings.Contains(p, "://") {
+			return fmt.Errorf(i18n.T("settings.add_rule.error.exact_has_scheme"))
+		}
+		if strings.Contains(p, "/") {
+			return fmt.Errorf(i18n.T("settings.add_rule.error.exact_has_path"))
+		}
+	case MatchContains, MatchPrefix, MatchSuffix:
+		// 快捷方式里写了 * 或 ?，说明用户其实想用通配，但快捷方式不会解释它们，
+		// 只会被当成普通字符 —— 结果规则永远不命中，必须拦下来。
+		if strings.ContainsAny(p, "*?") {
+			return fmt.Errorf(i18n.T("settings.add_rule.error.quick_has_glob"))
+		}
+	}
+
+	// 完全重复的规则（同 pattern + 同 mode + 同 browser）没有任何意义，且会让人
+	// 困惑于"改了怎么没生效"（被优先级相同的另一条抢先命中）。
+	for _, r := range rules {
+		if r.ID == excludeID {
+			continue
+		}
+		if r.Mode == mode && strings.EqualFold(strings.TrimSpace(r.Pattern), p) && r.Browser == browserID {
+			return fmt.Errorf(i18n.Tf("settings.add_rule.error.duplicate", p))
+		}
+	}
 	return nil
 }
 
@@ -163,6 +255,10 @@ func SuggestMatchMode(pattern string) MatchMode {
 	// 即便其中也含有 * —— 例如 ".*\.test\..*" 应是 regex 而非通配符。
 	if strings.ContainsAny(pattern, `\[]()|`) {
 		return MatchRegex
+	}
+	// 含 scheme（http:// https:// ftp:// 等）→ 完整 URL 完全相等
+	if strings.Contains(pattern, "://") {
+		return MatchURLEqual
 	}
 	if strings.ContainsAny(pattern, "*?") {
 		return MatchWildcard

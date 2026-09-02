@@ -406,13 +406,13 @@ build:
 
 ---
 
-### I-23 · `settings.go` 733 行，职责过载（SRP 违规）
+### I-23 · `settings.go` 1039 行，职责过载（SRP 违规）
 
 **定位**：[settings.go](settings.go)
 
-单文件承担了：三个标签页构建 + 添加规则对话框 + 通用小工具（`badgeNum` / `iconButton` / `ternary` / `indexOf` / `thinSepObj`）+ i18n 匹配模式名的正反查表 + `mergeDetected` 业务逻辑。
+单文件承担了：三个标签页构建 + 添加/编辑规则对话框 + 通用小工具（`badgeNum` / `iconButton` / `ternary` / `indexOf` / `thinSepObj`）+ i18n 匹配模式名的正反查表 + `mergeDetected` 业务逻辑 + **窗口单例管理**（`settingsWin` / `ruleDialogWin` / `reloadConfigInto`）。
 
-它是全项目最大的文件（733 行，第二名 `main.go` 415 行）。`modeDisplayName` / `modeFromDisplayName` 这对互逆函数尤其危险——两处 `switch` 必须同步维护，漏一个 case 就静默退化为 `MatchExact`。
+它是全项目最大的文件（**1039 行**，第二名 `main.go` 415 行）。`modeDisplayName` / `modeFromDisplayName` 这对互逆函数尤其危险——两处 `switch` 必须同步维护，漏一个 case 就静默退化为 `MatchExact`。新增 `urlequal` 模式时新增了第三个函数 `modeHintText`，三处 `switch` 现在都要同步，风险进一步上升。
 
 **建议**：拆为 `settings_browsers.go` / `settings_rules.go` / `settings_general.go`；小工具移入 `gui.go`；模式名映射改为单一 `var modeMeta = []struct{ mode MatchMode; key string }{...}` 表驱动。
 
@@ -440,13 +440,13 @@ build:
 | `DetectBrowsers()`（仅首次运行） | [browsers_darwin.go:62](browsers_darwin.go#L62) | 每个 `.app` 一次 `plutil` 子进程，4 个目录可能 100+ 次 |
 | `DetectProfiles()` × 全部收藏浏览器 | [picker.go:195](picker.go#L195) | 每个浏览器读一次 `Local State` JSON / `profiles.ini` |
 | `browserIconPath()` 缓存未命中 | [icons_darwin.go:26](icons_darwin.go#L26) | 每个浏览器 1 次 `plutil` + 1 次 `sips` 子进程 |
-| 正则编译 | [rules.go:82](rules.go#L82) | 每条 regex/wildcard 规则每次匹配都 `regexp.Compile` |
+| 正则编译 | [rules.go](rules.go) `matchPattern` | 每条 **regex** 规则每次匹配仍 `regexp.Compile`；**wildcard 已加 `sync.Map` 缓存**（`wildcardRegexp`） |
 
 首次启动或图标缓存被清空后，弹出选择器前要串行跑十几个子进程。
 
 **建议**：
 - 图标提取改并发（`errgroup`），或用 `//go:embed` 预置常见浏览器图标
-- 编译后的正则按 `Rule.ID` 缓存（`sync.Map`），配置变更时失效
+- **regex 模式补上同样的缓存**（照 `wildcardRegexp` 的写法即可，`wildcardCache` 已是现成模板）
 - `DetectProfiles` 结果在单次进程内缓存（当前 `buildBrowsersTab` 每次 refresh 都重新读盘）
 
 ---

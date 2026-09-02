@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,7 +40,7 @@ func setupPickerWindow(a fyne.App, w fyne.Window, url string, cfg *Config, done 
 		if remember {
 			addRuleForURL(url, b, cfg)
 		}
-		if err := LaunchBrowser(b, url); err != nil {
+		if err := LaunchBrowser(b, url, false); err != nil {
 			fmt.Fprintf(os.Stderr, i18n.T("browser.open_failed"), err)
 		}
 		done()
@@ -51,7 +52,7 @@ func setupPickerWindow(a fyne.App, w fyne.Window, url string, cfg *Config, done 
 		if remember {
 			addRuleForURL(url, b, cfg) // 仅记浏览器；配置档不进规则
 		}
-		if err := LaunchBrowserProfile(b, p, url); err != nil {
+		if err := LaunchBrowserProfile(b, p, url, false); err != nil {
 			fmt.Fprintf(os.Stderr, i18n.T("browser.open_profile_failed"), p.Name, b.Name, err)
 		}
 		done()
@@ -100,20 +101,53 @@ func setupPickerWindow(a fyne.App, w fyne.Window, url string, cfg *Config, done 
 		})
 	}
 
-	// 倒计时
+	// ⌘R：与点击"更多"卡片完全等价 —— 展开完整浏览器列表。
+	w.Canvas().AddShortcut(&desktop.CustomShortcut{
+		KeyName:  fyne.KeyR,
+		Modifier: fyne.KeyModifierSuper,
+	}, func(fyne.Shortcut) {
+		fyne.Do(func() { pu.expand() })
+	})
+
+	// 倒计时：用 stopCh 而非固定 Sleep，保证"暂停"（打开设置）能立即中断等待，
+	// 不会出现刚点设置、1 秒后又被倒计时自动打开浏览器关掉设置窗口的竞态。
 	total := cfg.AutoCloseDelay
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once // 齿轮可能被反复点击，close 只能执行一次
+	stopped := func() bool {
+		select {
+		case <-stopCh:
+			return true
+		default:
+			return picked.Load()
+		}
+	}
 	if total > 0 && pu.def != nil {
 		go func() {
 			for i := total; i > 0; i-- {
+				if stopped() {
+					return
+				}
 				rem := i
 				fyne.Do(func() { pu.setCountdown(rem) })
-				time.Sleep(time.Second)
-				if picked.Load() {
+				select {
+				case <-time.After(time.Second):
+				case <-stopCh:
 					return
 				}
 			}
+			if stopped() {
+				return
+			}
 			fyne.Do(func() { open(*pu.def, false) })
 		}()
+	}
+
+	// 当用户点击设置（齿轮）时调用：暂停倒计时并隐藏倒计时显示，让设置窗口能正常停留。
+	pu.onSettings = func() {
+		stopOnce.Do(func() { close(stopCh) })
+		pu.hideCountdown()
+		OpenSettingsWindow(a, cfg)
 	}
 
 	resizePicker(w, 1) // 默认 1 排
@@ -138,7 +172,11 @@ type pickerUI struct {
 	def             *Browser
 	remember        *widget.Check
 	setCountdown    func(remaining int)
+	hideCountdown   func()
+	expand          func()   // 展开为完整列表（多排），等价于点击"更多"卡片
 	shortcutActions []func() // ⌘(i+1) 打开第 i 个浏览器（完整列表，含“更多”里隐藏的）
+	// onSettings 由 setupPickerWindow 赋值：点齿轮时同时暂停倒计时，避免弹出设置后窗口被自动关闭。
+	onSettings func()
 }
 
 // buildPickerUI 构建选择器内容（不驱动主循环）。open 处理卡片点击/快捷键，
@@ -149,6 +187,9 @@ func buildPickerUI(a fyne.App, w fyne.Window, url string, cfg *Config, open func
 	surface := tcol(theme.ColorNameInputBackground)
 	pal := paletteFromTheme()
 
+	// 提前声明 pu，以便齿轮按钮 / 卡片回调等内部闭包可以在 pu 填充后访问 onSettings。
+	var pu *pickerUI
+
 	// 完整有序列表：有收藏则取收藏项（浏览器或具体账户），否则全部（已去隐藏）。⌘N 始终映射到它。
 	items := cfg.FavoriteItems()
 	def := findBrowserByID(cfg.DefaultBrowser, cfg)
@@ -158,10 +199,9 @@ func buildPickerUI(a fyne.App, w fyne.Window, url string, cfg *Config, open func
 
 	rememberChk := widget.NewCheck(i18n.Tf("picker.remember", hostOf(url)), nil)
 
-	// 顶部满宽地址栏
+	// 顶部满宽地址栏：点击整段即可复制完整 URL 到剪贴板（Hyperlink 自带 hover 视觉提示）
 	globe := plainText("🌐", 15, accent)
-	urlLabel := widget.NewLabel(url)
-	urlLabel.Truncation = fyne.TextTruncateEllipsis
+	urlLabel := newClickableURLLabel(url)
 	addrBG := canvas.NewRectangle(surface)
 	addrBG.CornerRadius = 9
 	addrBG.StrokeColor = withAlpha(fg, 0x10)
@@ -274,13 +314,26 @@ func buildPickerUI(a fyne.App, w fyne.Window, url string, cfg *Config, open func
 	}
 	renderGrid(false)
 
+	// hideCountdown / expand 都通过 pu 来对外暴露 —— ⌘R 与点击设置都需要用到它们。
+	hideCountdown := func() { countArea.Hide() }
+	expand := func() {
+		renderGrid(true)
+		resizePicker(w, len(items))
+	}
+
 	// 底部动作
 	copyBtn := widget.NewButtonWithIcon("", theme.ContentCopyIcon(), func() {
 		a.Clipboard().SetContent(url)
 	})
 	copyBtn.Importance = widget.LowImportance
 	gearBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() {
-		OpenSettingsWindow(a, cfg)
+		// 优先走 setupPickerWindow 注入的回调（它会同步暂停倒计时并打开设置窗口），
+		// 避免回调缺失时点击齿轮等于无反应。
+		if pu != nil && pu.onSettings != nil {
+			pu.onSettings()
+		} else {
+			OpenSettingsWindow(a, cfg)
+		}
 	})
 	gearBtn.Importance = widget.LowImportance
 	footer := container.NewBorder(nil, nil, rememberChk, container.NewHBox(copyBtn, gearBtn))
@@ -297,7 +350,16 @@ func buildPickerUI(a fyne.App, w fyne.Window, url string, cfg *Config, open func
 		footer,
 	))
 
-	return &pickerUI{root: root, def: def, remember: rememberChk, setCountdown: setCountdown, shortcutActions: shortcutActions}
+	pu = &pickerUI{
+		root:            root,
+		def:             def,
+		remember:        rememberChk,
+		setCountdown:    setCountdown,
+		hideCountdown:   hideCountdown,
+		expand:          expand,
+		shortcutActions: shortcutActions,
+	}
+	return pu
 }
 
 // showProfileMenu 在卡片下方弹出该浏览器的多账户配置菜单，选定后用对应配置打开。
@@ -342,6 +404,23 @@ func makePickerCard(icon fyne.CanvasObject, title, shortcut string, fg, subtle c
 	)
 	stack := container.NewStack(bg, container.NewPadded(inner))
 	return newCard(stack, bg, pal, onTap)
+}
+
+// ---- 可点击复制的 URL 标签 ----
+
+// clickableURLLabel 是 picker 头部地址栏的"点击复制"组件 ——
+// 底层是 widget.Hyperlink（自带 hover/cursor/focus 视觉），但劫持 OnTapped
+// 让点击时仅把整段 URL 写入剪贴板，而不是让浏览器打开 URL 本身。
+type clickableURLLabel struct {
+	widget.Hyperlink
+}
+
+func newClickableURLLabel(text string) *clickableURLLabel {
+	l := &clickableURLLabel{Hyperlink: *widget.NewHyperlink(text, nil)}
+	l.Hyperlink.Truncation = fyne.TextTruncateEllipsis
+	l.Hyperlink.OnTapped = func() { fyne.CurrentApp().Clipboard().SetContent(l.Hyperlink.Text) }
+	l.ExtendBaseWidget(l)
+	return l
 }
 
 // ---- 记住选择 → 生成规则 ----

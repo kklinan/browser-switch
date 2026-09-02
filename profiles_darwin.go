@@ -173,33 +173,50 @@ func findProfileByID(b Browser, profileID string) *Profile {
 }
 
 // LaunchBrowserProfile 用指定配置档打开 URL。空配置或合成无痕走相应分支。
-func LaunchBrowserProfile(b Browser, p Profile, url string) error {
+// newWindow 为 true 时在原 profile 中打开到新窗口（不影响 profile 选择）。
+func LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) error {
 	bundleID := b.BundleID()
 
 	// 无痕：直接执行二进制 + 无痕参数最稳，失败回退 open。
 	if p.Kind == "incognito" {
 		if exe := appExecPath(b.Desktop); exe != "" {
 			if _, ok := chromiumDataDir[bundleID]; ok {
-				return runDetached(exe, incognitoFlag(bundleID), url)
+				args := []string{incognitoFlag(bundleID)}
+				if newWindow {
+					args = append(args, "--new-window")
+				}
+				return runDetached(exe, append(args, url)...)
 			}
 			if bundleID == "org.mozilla.firefox" {
-				return runDetached(exe, "--private-window", url)
+				args := []string{"--private-window"}
+				if newWindow {
+					args = append(args, "--new-window")
+				}
+				return runDetached(exe, append(args, url)...)
 			}
 		}
-		return LaunchBrowser(b, url)
+		return LaunchBrowser(b, url, newWindow)
 	}
 
 	exe := appExecPath(b.Desktop)
 	if exe == "" {
-		return LaunchBrowser(b, url) // 兜底
+		return LaunchBrowser(b, url, newWindow) // 兜底
 	}
 	if _, ok := chromiumDataDir[bundleID]; ok {
-		return runDetached(exe, "--profile-directory="+p.ID, url)
+		args := []string{"--profile-directory=" + p.ID}
+		if newWindow {
+			args = append(args, "--new-window")
+		}
+		return runDetached(exe, append(args, url)...)
 	}
 	if bundleID == "org.mozilla.firefox" {
-		return runDetached(exe, "-P", p.ID, url)
+		args := []string{"-P", p.ID}
+		if newWindow {
+			args = append(args, "--new-window")
+		}
+		return runDetached(exe, append(args, url)...)
 	}
-	return LaunchBrowser(b, url)
+	return LaunchBrowser(b, url, newWindow)
 }
 
 // appExecPath 读取 .app 的 CFBundleExecutable，返回包内二进制完整路径。

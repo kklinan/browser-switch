@@ -106,7 +106,8 @@ func runAppModeGUI(cfg *Config) {
 		// 命中"记住"写入的规则则直接用对应浏览器打开，不弹选择器；否则才展示选择器。
 		result := MatchURL(u, cfg)
 		if result.Matched && result.Browser != nil {
-			if err := LaunchBrowser(*result.Browser, u); err == nil {
+			newWin := result.Rule != nil && result.Rule.OpenInNewWindow
+			if err := LaunchBrowser(*result.Browser, u, newWin); err == nil {
 				if atomic.CompareAndSwapInt32(&decided, 0, 1) {
 					a.Quit() // 首个 URL 已命中规则并打开，无需 GUI，退出进程
 				}
@@ -123,7 +124,7 @@ func runAppModeGUI(cfg *Config) {
 				}
 			}
 			if def != nil {
-				_ = LaunchBrowser(*def, u)
+				_ = LaunchBrowser(*def, u, false)
 				if atomic.CompareAndSwapInt32(&decided, 0, 1) {
 					a.Quit()
 				}

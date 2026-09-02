@@ -62,9 +62,11 @@ Finicky 替代、Velja 替代、Browserosaurus 替代、Choosy 替代。
 | 功能 | 说明 |
 | ---- | ---- |
 | 🎯 **URL 拦截** | 注册为 macOS `http`/`https` 处理器，通过 Carbon Apple Event 直接接收 URL |
-| 📋 **六种规则模式** | 精确 / 通配符 / 正则 / 包含 / 前缀 / 后缀，按优先级降序命中 |
-| 🖱️ **卡片式选择器** | 浏览器图标网格，超过 4 个折叠进「更多」卡片 |
-| ⌨️ **键盘优先** | `⌘1`~`⌘9` 或数字键打开第 N 个浏览器；`Enter` 打开默认；`Esc` 取消 |
+| 📋 **七种规则模式** | 域名相等 / 完整网址相等 / 通配 / 正则 / 包含 / 前缀 / 后缀，按优先级降序命中 |
+| 🖱️ **卡片式选择器** | 浏览器图标网格，超过 4 个折叠进「更多(⌘R)」卡片 |
+| ⌨️ **键盘优先** | `⌘1`~`⌘9` 或数字键打开第 N 个浏览器；`⌘R` 展开完整列表；`Enter` 打开默认；`Esc` 取消 |
+| 🪟 **新窗口规则** | 任意规则都可强制用全新窗口打开，而不是复用已有窗口 |
+| 📝 **规则可编辑** | 规则支持就地修改，不只是新增与删除 |
 | ⏱️ **倒计时回退** | 超过可配置时长（默认 5 秒）后自动用**默认浏览器**打开，链接绝不卡住 |
 | 💾 **记住选择** | 勾选后自动为该域名生成精确匹配规则（优先级 100） |
 | 👥 **多账户支持** | 自动检测 Chromium（Chrome/Edge/Brave/Vivaldi/Opera）与 Firefox 账户，附带无痕模式 |
@@ -184,19 +186,21 @@ browser-switch --version             # 版本信息
 | 左键点击卡片 | 打开该浏览器；**若有多个账户，则弹出账户菜单** |
 | 右键点击卡片 | 弹出账户菜单（仅多账户浏览器） |
 | `⌘1`~`⌘9` / `1`~`9` | 直接打开第 N 个浏览器（使用默认账户） |
+| `⌘R` | 展开完整浏览器列表——与点击「更多」卡片等价 |
 | `Enter` | 打开默认浏览器 |
 | `Esc` | 取消，不打开任何浏览器 |
+| 点击顶部地址栏 | 把完整 URL 复制到剪贴板 |
 | 「记住此域名」 | 为本次选择写入一条 `exact` 规则 |
 | 齿轮 / 复制按钮 | 打开设置 / 复制 URL 到剪贴板 |
 
-倒计时归零时使用的是**默认浏览器**（配置中的 `default_browser`），而非当前高亮的卡片。
+倒计时归零时使用的是**默认浏览器**（配置中的 `default_browser`），而非当前高亮的卡片。通过齿轮按钮打开设置会**暂停倒计时**，不会出现你正在改规则、选择器却自动打开浏览器的情况。
 
 ### 设置窗口
 
 三个标签页：
 
 - **浏览器**——左侧：收藏列表（上移/下移/移除；顺序即 ⌘N 编号）；右侧：全部浏览器（收藏 ♥ / 隐藏 👁 / 展开账户 / 重新扫描）
-- **规则**——按优先级降序列出全部规则；支持新增与删除
+- **规则**——按优先级降序列出全部规则；支持新增、修改（✎）与删除；每条规则都可设为**新窗口打开**
 - **通用**——语言、默认浏览器、自动打开秒数、无匹配规则时的处理（弹出选择器，或直接用指定浏览器打开）、安装/卸载、「将其他浏览器设为系统默认」
 
 ---
@@ -206,15 +210,19 @@ browser-switch --version             # 版本信息
 | 模式 | 匹配对象 | 示例 |
 | ---- | -------- | ---- |
 | `exact` | host 全等 | `github.com` → 仅 github.com，不含 sub.github.com |
-| `wildcard` | host，支持 `*` `?` | `*.google.com` → mail.google.com |
+| `urlequal` | 完整网址全等 | `https://github.com/a/b` → 仅该网址，带 `?x=1` 就不算 |
+| `wildcard` | host **或**完整 URL，支持 `*` `?` | `*.google.com` → mail.google.com；`*/settings` → 任意设置页 |
 | `regex` | host **或**完整 URL | `.*\.(test\|staging)\..*` |
 | `contains` | host **或**完整 URL 子串 | `login` → example.com/login |
-| `prefix` | host 前缀 | `dev.` → dev.example.com |
-| `suffix` | host 后缀 | `.cn` → example.cn |
+| `prefix` | host **或**完整 URL 前缀 | `dev.` → dev.example.com；`https://` → 全部加密链接 |
+| `suffix` | host **或**完整 URL 后缀 | `.cn` → example.cn；`.pdf` → 全部 PDF 链接 |
 
 - 规则按 `priority` **降序**匹配，首个命中即返回。
 - 匹配时会同时用原始 host 和剥离 `www.` 后的 host 各试一次，因此 `example.com` 规则也能命中 `www.example.com`。
+- `contains` / `prefix` / `suffix` 是通配的**快捷方式**（等价于 `*p*` / `p*` / `*p`），供不熟悉 glob/正则的用户直接选用。它们**不解释** `*` 与 `?`（按字面量处理），写了规则必然永不命中，因此保存时会被拦下。
+- 除 `exact` / `urlequal` 外，其余模式都对 host 与完整 URL **各试一次**，所以只出现在路径（`*/settings`）或协议（`https://`）里的内容同样能命中。
 - 「记住选择」生成的规则优先级固定为 `100`，手动新增默认为 `50`。
+- 任意规则都可设为**新窗口打开**。由于 Chrome / Edge / Safari 都是单实例应用，`open -n` 会被静默忽略，因此这里改用 `--new-window`（Chromium/Firefox）或 AppleScript（Safari）。
 
 不打开浏览器测试任意 URL：
 
@@ -264,7 +272,8 @@ Browser Switch 读取你在各浏览器中配置好的账户：
       "browser": "com.microsoft.edgemac",
       "priority": 100,
       "enabled": true,
-      "comment": "工作站点用 Edge"
+      "comment": "工作站点用 Edge",
+      "open_in_new_window": false
     }
   ],
   "auto_close_delay": 5,
