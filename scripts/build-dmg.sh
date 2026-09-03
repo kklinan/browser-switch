@@ -39,6 +39,7 @@ APP_PATH="$DIST_DIR/$GOARCH/$APP_NAME.app"
 DMG_PATH="$DIST_DIR/BrowserSwitch-$VERSION-$GOARCH.dmg"
 STAGE_DIR="$DIST_DIR/dmg-stage"
 ICON="$ROOT_DIR/assets/BrowserSwitch.icns"
+BG_IMAGE="$ROOT_DIR/assets/dmg-background.png"
 
 # 1) 确保 .app 已构建
 if [[ ! -d "$APP_PATH" ]]; then
@@ -52,6 +53,13 @@ mkdir -p "$STAGE_DIR"
 # 复制 App 并建立指向 /Applications 的软链，供用户拖拽安装
 cp -R "$APP_PATH" "$STAGE_DIR/"
 ln -s /Applications "$STAGE_DIR/Applications"
+
+# 背景图：放入镜像内隐藏目录 .background/，供 Finder 设为窗口背景
+if [[ -f "$BG_IMAGE" ]]; then
+  mkdir -p "$STAGE_DIR/.background"
+  cp "$BG_IMAGE" "$STAGE_DIR/.background/background.png"
+  echo "    使用背景图: assets/dmg-background.png"
+fi
 
 # 2) 生成可读写的临时 DMG（便于设置窗口布局），随后转为压缩只读发布版
 TMP_DMG="$DIST_DIR/.tmp-rw.dmg"
@@ -72,8 +80,13 @@ fi
 echo "    挂载于: $MOUNT_DIR"
 sleep 1
 
-# 3) 用 Finder 设置图标位置、窗口大小（拖拽引导视觉）
-#    图标：左侧 App、右侧 Applications，中间形成"拖过去"的直觉。
+# 3) 用 Finder 设置背景图、图标位置、窗口大小（拖拽引导视觉）
+#    图标：左侧 App、右侧 Applications，避开背景图中央的箭头、文案与 GitHub 卡片。
+#    窗口 600x422 = 背景图 600x400 + 标题栏约 22px，保证背景不被裁切。
+BG_LINE=""
+if [[ -f "$BG_IMAGE" ]]; then
+  BG_LINE='set background picture of theViewOptions to file ".background:background.png"'
+fi
 osascript <<APPLESCRIPT || true
 tell application "Finder"
   tell disk "$VOL_NAME"
@@ -81,12 +94,13 @@ tell application "Finder"
     set current view of container window to icon view
     set toolbar visible of container window to false
     set statusbar visible of container window to false
-    set the bounds of container window to {200, 120, 760, 520}
+    set the bounds of container window to {200, 120, 800, 542}
     set theViewOptions to the icon view options of container window
     set arrangement of theViewOptions to not arranged
     set icon size of theViewOptions to 128
-    set position of item "$APP_NAME.app" of container window to {150, 200}
-    set position of item "Applications" of container window to {410, 200}
+    $BG_LINE
+    set position of item "$APP_NAME.app" of container window to {140, 190}
+    set position of item "Applications" of container window to {490, 190}
     update without registering applications
     delay 1
     close
