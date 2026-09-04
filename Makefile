@@ -2,7 +2,7 @@
 
 BINARY=browser-switch
 GOFLAGS=-ldflags="-s -w"
-VERSION?=1.0.0
+VERSION?=1.0.1
 
 # 构建 macOS 可执行文件（必须开启 CGO：依赖 CoreServices / CoreFoundation / Carbon）
 build:

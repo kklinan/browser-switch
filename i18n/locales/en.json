@@ -1,7 +1,7 @@
 {
   "app.name": "Browser Switch",
   "app.full_name": "Browser Switch",
-  "app.version": "Version 1.0.0",
+  "app.version": "Version 1.0.1",
   "app.built_with": "Built with Fyne",
   "app.settings_title": "Browser Switch Settings",
   "common.cancel": "Cancel",

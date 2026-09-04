@@ -1,6 +1,6 @@
 # Browser Switch 产品需求文档（PRD）
 
-> 版本：v1.0.0 · 最后校对：2026-07-08 · 校对方式：逐行比对 `master` 分支实际代码实现
+> 版本：v1.0.1 · 最后校对：2026-09-04 · 校对方式：逐行比对 `main` 分支实际代码实现
 >
 > 本文档描述**已实现**的产品行为。未实现的构想统一收敛到 [docs/ROADMAP.md](docs/ROADMAP.md)，已知缺陷收敛到 [docs/ISSUES.md](docs/ISSUES.md)。
 

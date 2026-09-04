@@ -4,10 +4,10 @@
 # 与 Chrome / VS Code 等正式软件一致的体验。
 # 支持架构: amd64 / arm64 / universal（缺省 = 当前主机架构）
 # 用法:
-#   VERSION=1.0.0 ./scripts/build-dmg.sh            # 当前主机架构
-#   VERSION=1.0.0 ./scripts/build-dmg.sh amd64      # Intel (Mac x64)
-#   VERSION=1.0.0 ./scripts/build-dmg.sh arm64      # Apple Silicon (Mac ARM64)
-#   VERSION=1.0.0 ./scripts/build-dmg.sh universal  # 通用包
+#   VERSION=1.0.1 ./scripts/build-dmg.sh            # 当前主机架构
+#   VERSION=1.0.1 ./scripts/build-dmg.sh amd64      # Intel (Mac x64)
+#   VERSION=1.0.1 ./scripts/build-dmg.sh arm64      # Apple Silicon (Mac ARM64)
+#   VERSION=1.0.1 ./scripts/build-dmg.sh universal  # 通用包
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +33,7 @@ echo "==> 目标架构: $GOARCH"
 
 APP_NAME="Browser Switch"
 VOL_NAME="Browser Switch"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.0.1}"
 DIST_DIR="$ROOT_DIR/dist"
 APP_PATH="$DIST_DIR/$GOARCH/$APP_NAME.app"
 DMG_PATH="$DIST_DIR/BrowserSwitch-$VERSION-$GOARCH.dmg"

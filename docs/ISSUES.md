@@ -350,11 +350,11 @@ default:            // ← 通道满 → 直接丢弃，无日志无提示
 
 ### I-18 · 版本号硬编码在 7 个语言包里
 
-**定位**：`i18n/locales/*.json` 中的 `"app.version": "Version 1.0.0"`
+**定位**：`i18n/locales/*.json` 中的 `"app.version": "Version 1.0.1"`
 
-版本号本不是需要翻译的内容，却被塞进了翻译 key。发一个 v1.0.1 需要改 7 个 JSON 文件，且必然有人漏改。
+版本号本不是需要翻译的内容，却被塞进了翻译 key。发一个版本需要改 7 个 JSON 文件，此外还有 4 处需要同步：`Makefile` 的 `VERSION?=1.0.1`、`scripts/build-dmg.sh` 的 `VERSION="${VERSION:-1.0.1}"`、以及 `install_darwin.go` 两份 Info.plist 模板里的 `CFBundleShortVersionString`。**共 11 处，必然有人漏改。**
 
-**建议**：`constants.go` 加 `const AppVersion = "1.0.0"`（或构建时 `-ldflags "-X main.AppVersion=..."` 注入 git tag），语言包只保留 `"app.version_label": "Version %s"` 这样的模板。
+**建议**：`constants.go` 加 `const AppVersion = "1.0.1"`（或构建时 `-ldflags "-X main.AppVersion=..."` 注入 git tag），语言包只保留 `"app.version_label": "Version %s"` 这样的模板；`Makefile` 与打包脚本统一从 git tag 取值。
 
 ---
 

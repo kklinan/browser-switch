@@ -179,7 +179,7 @@ for f in i18n/locales/*.json; do
 done
 ```
 
-- `app.version` 是一个**翻译 key**（值为 `"Version 1.0.0"`），版本号硬编码在 7 个语言包里。版本升级需要改 7 个文件——这是设计缺陷（ISSUES I-18），不是可以照抄的模式。
+- `app.version` 是一个**翻译 key**（值为 `"Version 1.0.1"`），版本号硬编码在 7 个语言包里（另有 `Makefile` 的 `VERSION?=`、`scripts/build-dmg.sh` 的默认值、`install_darwin.go` 两份 Info.plist 模板的 `CFBundleShortVersionString` 共 5 处需要同步）。版本升级要改 11 处——这是设计缺陷（ISSUES I-18），不是可以照抄的模式。
 
 ---
 
@@ -230,3 +230,5 @@ done
 - [PRD.md](PRD.md) —— 产品需求（已按真实实现校对）
 - [docs/ISSUES.md](docs/ISSUES.md) —— 现存问题清单（含代码定位与修复建议）
 - [docs/ROADMAP.md](docs/ROADMAP.md) —— 产品规划建议
+- [docs/RELEASE-NOTES-1.0.1.md](docs/RELEASE-NOTES-1.0.1.md) —— v1.0.1 发版说明（对外的 Release Notes 风格存档）
+- [CHANGELOG.md](CHANGELOG.md) —— 逐版本、逐条目的改动清单（面向维护者，与 Release Notes 互补）

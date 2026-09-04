@@ -1,7 +1,7 @@
 {
   "app.name": "Browser Switch",
   "app.full_name": "Browser Switch",
-  "app.version": "संस्करण 1.0.0",
+  "app.version": "संस्करण 1.0.1",
   "app.built_with": "Fyne के साथ निर्मित",
   "app.settings_title": "Browser Switch सेटिंग्स",
   "common.cancel": "रद्द करें",
