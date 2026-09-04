@@ -195,7 +195,7 @@ Default=Profiles/xxxx.default-release
 
 ---
 
-### I-9 · 多 profile 浏览器的左键点击与 ⌘N 语义不一致
+### I-9 · 多 profile 浏览器的左键点击与 ⌘N 语义不一致 — ✅ 已解决（2026-09-03）
 
 **定位**：[picker.go:217](picker.go#L217) vs [picker.go:188](picker.go#L188)
 
@@ -210,6 +210,8 @@ shortcutActions[i] = func() { open(b, rememberChk.Checked) }
 同一张卡片，鼠标点击弹出账户选择菜单，按 `⌘1` 却直接用默认 profile 打开。两条路径对「选择这个浏览器」的语义定义不同。
 
 **建议**：统一。要么 ⌘N 也弹菜单（键盘用户可继续用方向键选择），要么给卡片加一个显式的「▾」区域触发菜单、卡片主体直接打开。后者体验更好。
+
+**现状**：已统一到第一条 —— 卡片点击与 ⌘N 现在共用同一个 `shortcutActions[i]`。是否弹菜单由新增的 `profilesNeedChoice(profiles)` 决定：只有存在多个**真实** profile 时才必须选账户（无痕是合成项，不算），此时点击与 ⌘N 都弹菜单；只有「默认 + 无痕」时两者都直接打开，无痕走右键菜单，卡片副标题给出「⌘N · 右键选无痕」提示。
 
 ---
 

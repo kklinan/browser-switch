@@ -38,7 +38,7 @@ func setupPickerWindow(a fyne.App, w fyne.Window, url string, cfg *Config, done 
 			return
 		}
 		if remember {
-			addRuleForURL(url, b, cfg)
+			addRuleForURL(url, b, nil, cfg) // nil = 未选具体账户
 		}
 		if err := LaunchBrowser(b, url, false); err != nil {
 			fmt.Fprintf(os.Stderr, i18n.T("browser.open_failed"), err)
@@ -50,7 +50,9 @@ func setupPickerWindow(a fyne.App, w fyne.Window, url string, cfg *Config, done 
 			return
 		}
 		if remember {
-			addRuleForURL(url, b, cfg) // 仅记浏览器；配置档不进规则
+			// 账户必须一并写进规则：只记浏览器的话，下次命中规则仍会用默认账户打开，
+			// 用户选的"无痕/某账号"等于白选。
+			addRuleForURL(url, b, &p, cfg)
 		}
 		if err := LaunchBrowserProfile(b, p, url, false); err != nil {
 			fmt.Fprintf(os.Stderr, i18n.T("browser.open_profile_failed"), p.Name, b.Name, err)
@@ -246,11 +248,16 @@ func buildPickerUI(a fyne.App, w fyne.Window, url string, cfg *Config, open func
 			shortcutActions[i] = func() { openProfile(b, p, rememberChk.Checked) }
 			continue
 		}
-		// 收藏的是整浏览器：预取其多账户配置，多账号则弹菜单，单账号直接开。
+		// 收藏的是整浏览器：预取其多账户配置；只有存在多个真实账户时 ⌘N 才必须先
+		// 选账户，否则直接打开（无痕等单账户场景走卡片右键菜单，不打断 ⌘N）。
 		b := it.Browser
 		profs := DetectProfiles(b)
-		if len(profs) > 0 {
-			profilesByID[b.ID] = profs
+		if len(profs) == 0 {
+			shortcutActions[i] = func() { open(b, rememberChk.Checked) }
+			continue
+		}
+		profilesByID[b.ID] = profs
+		if profilesNeedChoice(profs) {
 			shortcutActions[i] = func() { showProfileMenu(w, nil, b, profs, rememberChk.Checked, openProfile) }
 		} else {
 			shortcutActions[i] = func() { open(b, rememberChk.Checked) }
@@ -275,7 +282,7 @@ func buildPickerUI(a fyne.App, w fyne.Window, url string, cfg *Config, open func
 
 			if it.Profile != nil {
 				// 收藏的具体账户：标题「浏览器 · 账户」，左键直接用该账户打开，无二级菜单。
-				title := shortName(b.Name) + " · " + shortName(it.Profile.Name)
+				title := shortName(b.Name) + profileSep + profileDisplayName(*it.Profile)
 				c := makePickerCard(browserIcon(b, 52), title, i18n.Tf("picker.shortcut", i+1), fg, subtle, pal, tapAction)
 				objs = append(objs, shadowed(c))
 				continue
@@ -283,9 +290,13 @@ func buildPickerUI(a fyne.App, w fyne.Window, url string, cfg *Config, open func
 
 			profs := profilesByID[b.ID]
 			sub := i18n.Tf("picker.shortcut", i+1)
-			if len(profs) > 0 {
+			switch {
+			case profilesNeedChoice(profs):
 				// 多账号整浏览器：副标题提示可选账户，左键点击直接展开账户菜单（右键亦可）。
 				sub = i18n.Tf("picker.shortcut_profiles", i+1)
+			case len(profs) > 0:
+				// 单账户（通常只有"默认 + 无痕"）：左键仍直接打开，副标题提示无痕在右键菜单里。
+				sub = i18n.Tf("picker.shortcut_incognito", i+1)
 			}
 			c := makePickerCard(browserIcon(b, 52), shortName(b.Name), sub, fg, subtle, pal, tapAction)
 			if def != nil && b.ID == def.ID {
@@ -425,13 +436,21 @@ func newClickableURLLabel(text string) *clickableURLLabel {
 
 // ---- 记住选择 → 生成规则 ----
 
-func addRuleForURL(rawURL string, browser Browser, cfg *Config) {
+// addRuleForURL 把"记住的选择"落成一条 exact 域名规则。
+// profile 为 nil 表示用户选的是整浏览器（默认账户）；非 nil 则把账户 ID 一并写入，
+// 下次命中规则时才会用同一个账户打开。
+func addRuleForURL(rawURL string, browser Browser, profile *Profile, cfg *Config) {
 	host := extractDomain(rawURL)
 	if host == "" {
 		return
 	}
+	// 账户参与去重：同一域名分别用 Chrome 的 A 账号与 B 账号记住，是两条不同规则。
+	profileID := ""
+	if profile != nil {
+		profileID = profile.ID
+	}
 	for _, r := range cfg.Rules {
-		if r.Pattern == host && r.Browser == browser.ID {
+		if r.Pattern == host && r.Browser == browser.ID && r.Profile == profileID {
 			return
 		}
 	}
@@ -440,6 +459,7 @@ func addRuleForURL(rawURL string, browser Browser, cfg *Config) {
 		Pattern:  host,
 		Mode:     MatchExact,
 		Browser:  browser.ID,
+		Profile:  profileID,
 		Priority: 100,
 		Enabled:  true,
 		Comment:  fmt.Sprintf("Auto-created for %s", rawURL),

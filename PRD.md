@@ -126,7 +126,7 @@ LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) error
 
 **辅助能力**：
 - `ValidatePattern(pattern, mode)`：空 pattern 报错；`regex` 模式额外校验语法可编译；`wildcard` 转译后校验正则可用
-- `ValidateRuleInput(pattern, mode, browserID, rules, excludeID)`：保存前的**语义**校验，捕捉"语法合法但保存后一定不生效"或"毫无意义"的写法——`urlequal` 缺 `://`、`exact` 含 scheme 或路径、快捷方式里出现 `*`/`?`、完全重复的规则。`excludeID` 用于编辑场景排除自身
+- `ValidateRuleInput(pattern, mode, browserID, profileID, rules, excludeID)`：保存前的**语义**校验，捕捉"语法合法但保存后一定不生效"或"毫无意义"的写法——`urlequal` 缺 `://`、`exact` 含 scheme 或路径、快捷方式里出现 `*`/`?`、完全重复的规则（**同 pattern + 同 mode + 同浏览器 + 同账户**才算重复）。`excludeID` 用于编辑场景排除自身
 - `SuggestMatchMode(pattern)`：含 `\ [ ] ( ) |` → `regex`；含 `://` → `urlequal`；含 `* ?` → `wildcard`；否则 `exact`。用于添加规则对话框的实时模式推测
 - `--test <url>`：只输出匹配结果与 MatchLog，不启动浏览器
 
@@ -167,7 +167,9 @@ LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) error
 
 **倒计时暂停**：点击齿轮打开设置时，通过 `close(stopCh)` 立即中断倒计时的 `select` 等待并隐藏倒计时区。倒计时的等待用 `select { time.After / stopCh }` 而非固定 `time.Sleep`，否则会出现「刚点开设置、1 秒后又被自动打开浏览器关掉」的竞态。`sync.Once` 保证 `stopCh` 只关闭一次。
 
-**记住选择**：勾选后调用 `addRuleForURL()`，用 `extractDomain()`（剥离 scheme / www / 路径 / 端口 / query）得到的 host 写入一条 `exact` 规则，`priority=100`，`comment="Auto-created for <url>"`。同 host + 同 browser 已存在时跳过（去重）。**仅记录浏览器，不记录 profile。**
+**记住选择**：勾选后调用 `addRuleForURL()`，用 `extractDomain()`（剥离 scheme / www / 路径 / 端口 / query）得到的 host 写入一条 `exact` 规则，`priority=100`，`comment="Auto-created for <url>"`。同 host + 同浏览器 + 同账户已存在时跳过（去重）。
+
+**账户一并记住**：从账户菜单里选定的子账号 / 无痕会写入 `Rule.Profile`（账户 ID，无痕为 `__incognito__`），命中规则时由 `launchForRule()` 走 `LaunchBrowserProfile()`；只选整浏览器时该字段为空，行为与过去一致。只记浏览器的话，用户选的"无痕/某账号"下次打开会被静默忽略。
 
 ---
 
@@ -218,9 +220,10 @@ LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) error
 
 - **Chromium 家族**：读取 `~/Library/Application Support/<映射目录>/Local State` 的 `profile.info_cache`。已映射：Chrome、Chrome Canary、Edge、Brave、Vivaldi、Opera
 - **Firefox**：解析 `~/Library/Application Support/Firefox/profiles.ini` 的 `[ProfileN]` 段
-- 检测到 **≤1 个** profile 时返回 `nil`（单账户展开菜单无意义）
-- 检测到 ≥2 个时，在列表末尾追加一个合成的「无痕模式」条目
+- 末尾始终追加一个合成的「无痕模式」条目（`__incognito__`）——**即便只检测到默认这一个 profile**。多数用户就只有默认账户，此前"≤1 个就返回 nil"让他们在选择器里根本选不到无痕
+- 不支持多账户的浏览器（如 Safari）仍返回 `nil`
 - 默认 profile 排首位，其余按名称稳定排序
+- `profilesNeedChoice(profiles)` 判断打开前是否**必须**挑账户：只有存在多个真实 profile 时才必须（无痕是合成项，不算）。单账户浏览器点卡片直接打开，无痕走右键菜单
 
 **启动方式**（关键约束）：必须**直接执行 `.app` 包内的二进制**并传参，因为浏览器已在运行时 `open -b` 会忽略 `--profile-directory` 等参数。
 - Chromium：`<exe> --profile-directory=<ID> <url>`
@@ -233,11 +236,11 @@ LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) error
 
 ### F9. 规则管理
 
-- 设置「规则」标签按 `priority` 降序列出：`模式徽章 | pattern | → | 浏览器名 |「新窗口」角标 | 编辑按钮 | 删除按钮`
+- 设置「规则」标签按 `priority` 降序列出：`模式徽章 | pattern | → | 浏览器名[ · 账户名] |「新窗口」角标 | 编辑按钮 | 删除按钮`。规则指定了账户时**必须显示账户名**，否则"记住了无痕"和"记住了 Chrome"在列表里长得一样；账户已删除时显示「账户已不存在」
 - 「添加规则」/「编辑规则」打开独立窗口表单（复用当前 app 实例，避免嵌套事件循环）：
   - 匹配内容（输入时实时调用 `SuggestMatchMode` 自动切换模式下拉；**用户一旦手动选过模式就不再自动覆盖**）
   - 匹配模式（7 选 1，本地化显示名；选中项下方实时显示该模式的说明，三个快捷方式额外展示等价的通配写法）
-  - 目标浏览器（新建时预选 `default_browser`）
+  - 目标浏览器（下拉逐项列出「浏览器」与「浏览器 · 账户」，含无痕；新建时预选 `default_browser`，即不指定账户）
   - 优先级（默认 `50`，须为非负整数）
   - 备注（可选）
   - 新窗口打开（`open_in_new_window`）
@@ -311,7 +314,7 @@ LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) error
 | **冷启动 500ms 判定** | 500ms 内收到 URL → 弹选择器；未收到 → 判定为用户主动打开 App → 显示设置窗口 | 系统负载高时 Apple Event 可能晚于 500ms 到达，导致设置窗口先闪现（见 [docs/ISSUES.md](docs/ISSUES.md) I-4） |
 | **`open -b <bundleID>` 启动浏览器** | 遵循 LaunchServices，最可靠；不加 `-n` 以复用已开窗口 | 无法传递 `--profile-directory` 等参数，故 profile 启动必须直接执行包内二进制 |
 | **profile 启动直执二进制** | `open -b` 在浏览器已运行时丢弃参数 | 绕过 LaunchServices，需自行解析 `CFBundleExecutable` |
-| **「记住选择」只记浏览器不记 profile** | 规则模型中无 profile 字段，避免为低频场景引入复杂度（YAGNI） | 多账户用户每次仍需选择账户 |
+| **「记住选择」连 profile 一起记** | 规则模型增加 `Rule.Profile`，命中时走 `LaunchBrowserProfile`。只记浏览器会让"选了无痕/子账号"的选择被静默丢弃 | 规则多一个字段；账户被删除后规则退化为默认账户打开 |
 | **图标缓存到 `/tmp`** | 免去缓存目录管理，系统重启自动清理 | 浏览器更新图标后不刷新（无失效判断） |
 | **配置字段先声明后使用** | 早期为托盘、窗口尺寸预留字段 | 现存 5 个死字段（违反 YAGNI，见 ISSUES I-9） |
 

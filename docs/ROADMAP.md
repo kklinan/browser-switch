@@ -104,16 +104,20 @@ https://mail.google.com/u/1/inbox
 
 这是产品唯一的护城河，应该做深。
 
-#### 3.1 规则支持指定 profile（最高价值）
+#### 3.1 规则支持指定 profile（最高价值）—— ✅ 已实现（2026-09-03）
 
-当前 `Rule` 只有 `Browser` 字段，「记住选择」也明确不记 profile（PRD F8）。而多账户用户的真实诉求恰恰是：
+**来源**：用户实测反馈（2026-09-03）。「记住选择」勾了之后，选的是无痕或某个子账号，下次打开仍然是默认账户 —— 因为规则里根本没记账户；设置里添加规则时也选不到账户。
 
-> `*.company.com` → Chrome 的**工作账户**
-> `*.personal.com` → Chrome 的**个人账户**
+**已交付**（与 3.2 共用同一套 profile 启动逻辑）：
 
-**改造**：`Rule` 增加 `Profile string` 字段（空 = 默认 profile），`MatchURL` 返回 `*Profile`，命中时走 `LaunchBrowserProfile()`。「记住选择」在账户菜单里选定后连 profile 一起记。
+- `Rule` 增加 `Profile string`（JSON `profile`，空 = 不指定账户 / 默认账户）；老配置反序列化为空串，行为不变。
+- 「记住选择」选定账户后连 profile 一起记，去重粒度为「浏览器 + 账户」。
+- 两条 URL 入口（`handleURL`、`openPicker`）统一走 `launchForRule()`：有账户 → `LaunchBrowserProfile()`，账户已删除/不支持 → 退回普通打开。
+- 添加/编辑规则对话框的下拉逐项列出「浏览器」与「浏览器 · 账户」（含无痕）；规则列表显示账户名，账户不存在时显示「账户已不存在」。
+- `ValidateRuleInput` 的重复判定同步纳入账户维度。
+- 顺带修掉「只有默认一个账户的浏览器选不到无痕」：`DetectProfiles` 对 Chromium/Firefox 不再因 profile ≤ 1 而返回 nil，新增 `profilesNeedChoice()` 区分"必须挑账户"与"仅多一个无痕"。
 
-向后兼容：老配置无 `profile` 字段，JSON 反序列化为空串，行为不变。
+单元测试见 [remember_flow_test.go](../remember_flow_test.go)（`TestAddRuleForURLKeepsProfile`、`TestProfilesNeedChoice`）与 [addrule_test.go](../addrule_test.go)（`TestValidateRuleInput` 的账户维度用例）。
 
 **这一条的价值超过本文档其余所有功能之和。** Velja、Choosy、Finicky 都做不到「同一浏览器不同账户分流」。
 

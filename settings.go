@@ -225,11 +225,7 @@ func buildBrowsersTab(cfg *Config, refresh func()) fyne.CanvasObject {
 			if p == nil {
 				continue // 悬空：账户已删除
 			}
-			pname := p.Name
-			if p.Kind == "incognito" {
-				pname = i18n.T("picker.incognito")
-			}
-			label = shortName(b.Name) + " · " + pname
+			label = shortName(b.Name) + profileSep + profileDisplayName(*p)
 		}
 		pos++
 		keyc := key
@@ -301,10 +297,7 @@ func buildBrowsersTab(cfg *Config, refresh func()) fyne.CanvasObject {
 		// 展开的多账号：在该浏览器行下方缩进列出各账户，每个账户可独立收藏。
 		if len(profs) > 0 && browserExpanded[b.ID] {
 			for _, p := range profs {
-				label := p.Name
-				if p.Kind == "incognito" {
-					label = i18n.T("picker.incognito")
-				}
+				label := profileDisplayName(p)
 				fkey := encodeFavKey(b.ID, p.ID)
 				pHeart := widget.NewButton(ternary(isFav(fkey), i18n.T("settings.browsers.favorited"), i18n.T("settings.browsers.unfavorited")), func() { toggleFav(fkey) })
 				pHeart.Importance = widget.LowImportance
@@ -358,6 +351,32 @@ func buildBrowsersTab(cfg *Config, refresh func()) fyne.CanvasObject {
 
 // ---- 规则标签（完整规则编辑器）----
 
+// profileSep 是"浏览器 · 账户"组合展示的分隔符（规则列表与规则下拉框共用）。
+const profileSep = " · "
+
+// profileDisplayName 返回账户的展示名。无痕是合成项，其 Name 本就是 i18n 文案，
+// 这里统一走同一出口，避免各处再各自判断 Kind。
+func profileDisplayName(p Profile) string {
+	if p.Kind == "incognito" {
+		return i18n.T("picker.incognito")
+	}
+	return p.Name
+}
+
+// ruleTargetLabel 生成规则下拉项"浏览器[ · 账户]"的文本；profileID 为空即整浏览器。
+// 账户已被删除时退而显示原 ID，让用户在下拉里看得到"这条规则指向了不存在的账户"。
+func ruleTargetLabel(b Browser, profileID string) string {
+	if profileID == "" {
+		return shortName(b.Name)
+	}
+	for _, p := range DetectProfiles(b) {
+		if p.ID == profileID {
+			return shortName(b.Name) + profileSep + profileDisplayName(p)
+		}
+	}
+	return shortName(b.Name) + profileSep + profileID
+}
+
 func buildRulesTab(a fyne.App, cfg *Config, refresh func()) fyne.CanvasObject {
 	fg := tcol(theme.ColorNameForeground)
 	subtle := tcol(theme.ColorNamePlaceHolder)
@@ -380,6 +399,15 @@ func buildRulesTab(a fyne.App, cfg *Config, refresh func()) fyne.CanvasObject {
 		name := r.Browser
 		if b := findBrowserByID(r.Browser, cfg); b != nil {
 			name = shortName(b.Name)
+			if r.Profile != "" {
+				// 规则指定了账户：必须一并显示，否则"记住了无痕/某账号"在列表里
+				// 看起来和"记住了 Chrome"完全一样，出了问题无从排查。
+				if p := findProfileByID(*b, r.Profile); p != nil {
+					name += profileSep + profileDisplayName(*p)
+				} else {
+					name += profileSep + i18n.T("settings.rules.profile_missing")
+				}
+			}
 		}
 
 		modeText := modeDisplayName(r.Mode)
@@ -506,18 +534,31 @@ func showAddRuleDialog(a fyne.App, cfg *Config, refresh func(), editing *Rule) {
 	}
 	updateModeHint()
 
-	// 浏览器选择
+	// 浏览器选择：多账户浏览器会展开成多项（"Chrome"、"Chrome · 工作账号"、
+	// "Chrome · 无痕"），因为规则记住的是"浏览器 + 账户"这个组合 —— 只选浏览器
+	// 的话，命中规则时仍会用默认账户打开。
 	browserSelect := widget.NewSelect(nil, nil)
-	var browserID string
+	var browserID, profileID string
+	type ruleTarget struct{ browser, profile string }
+	targets := map[string]ruleTarget{} // 选项文本 → 目标（浏览器 + 账户）
+	addTarget := func(label string, t ruleTarget) {
+		if _, dup := targets[label]; dup {
+			// 极少数情况下两个浏览器 shortName 相同：加序号消歧，避免反查串味。
+			label = fmt.Sprintf("%s (%d)", label, len(browserSelect.Options))
+		}
+		targets[label] = t
+		browserSelect.Options = append(browserSelect.Options, label)
+	}
 	for _, b := range cfg.Browsers {
-		browserSelect.Options = append(browserSelect.Options, shortName(b.Name))
+		addTarget(shortName(b.Name), ruleTarget{browser: b.ID})
+		for _, p := range DetectProfiles(b) {
+			addTarget(ruleTargetLabel(b, p.ID), ruleTarget{browser: b.ID, profile: p.ID})
+		}
 	}
 	browserSelect.OnChanged = func(s string) {
-		for _, b := range cfg.Browsers {
-			if shortName(b.Name) == s {
-				browserID = b.ID
-				return
-			}
+		if t, ok := targets[s]; ok {
+			browserID = t.browser
+			profileID = t.profile
 		}
 	}
 
@@ -543,8 +584,9 @@ func showAddRuleDialog(a fyne.App, cfg *Config, refresh func(), editing *Rule) {
 		patternEntry.SetText(editing.Pattern)
 		for _, b := range cfg.Browsers {
 			if b.ID == editing.Browser {
-				browserSelect.SetSelected(shortName(b.Name))
+				browserSelect.SetSelected(ruleTargetLabel(b, editing.Profile))
 				browserID = b.ID
+				profileID = editing.Profile
 				break
 			}
 		}
@@ -552,11 +594,12 @@ func showAddRuleDialog(a fyne.App, cfg *Config, refresh func(), editing *Rule) {
 		commentEntry.SetText(editing.Comment)
 		newWinChk.SetChecked(editing.OpenInNewWindow)
 	} else if cfg.DefaultBrowser != "" {
-		// 新建模式：预选默认浏览器
+		// 新建模式：预选默认浏览器（不指定账户）
 		for _, b := range cfg.Browsers {
 			if b.ID == cfg.DefaultBrowser {
 				browserSelect.SetSelected(shortName(b.Name))
 				browserID = b.ID
+				profileID = ""
 				break
 			}
 		}
@@ -615,7 +658,7 @@ func showAddRuleDialog(a fyne.App, cfg *Config, refresh func(), editing *Rule) {
 			if editing != nil {
 				excludeID = editing.ID
 			}
-			if err := ValidateRuleInput(pattern, mode, browserID, cfg.Rules, excludeID); err != nil {
+			if err := ValidateRuleInput(pattern, mode, browserID, profileID, cfg.Rules, excludeID); err != nil {
 				fail(err)
 				return
 			}
@@ -627,6 +670,7 @@ func showAddRuleDialog(a fyne.App, cfg *Config, refresh func(), editing *Rule) {
 						cfg.Rules[i].Pattern = pattern
 						cfg.Rules[i].Mode = mode
 						cfg.Rules[i].Browser = browserID
+						cfg.Rules[i].Profile = profileID
 						cfg.Rules[i].Priority = priority
 						cfg.Rules[i].Comment = strings.TrimSpace(commentEntry.Text)
 						cfg.Rules[i].OpenInNewWindow = newWinChk.Checked
@@ -639,6 +683,7 @@ func showAddRuleDialog(a fyne.App, cfg *Config, refresh func(), editing *Rule) {
 					Pattern:         pattern,
 					Mode:            mode,
 					Browser:         browserID,
+					Profile:         profileID,
 					Priority:        priority,
 					Enabled:         true,
 					Comment:         strings.TrimSpace(commentEntry.Text),

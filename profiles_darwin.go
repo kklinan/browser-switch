@@ -10,6 +10,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,22 +38,37 @@ func incognitoFlag(bundleID string) string {
 	return "--incognito"
 }
 
-// DetectProfiles 返回某浏览器的可用配置档；不支持/无配置则返回 nil。
-// 总在末尾附一个合成的"无痕"配置。
+// DetectProfiles 返回某浏览器的可用配置档；不支持多账户则返回 nil。
+//
+// Chromium 系与 Firefox 总在末尾附一个合成的"无痕"配置 —— 即便只检测到默认
+// 这一个账户。绝大多数用户就只有默认账户，此前"少于 2 个配置就不展开"的规则
+// 会让他们在选择器里根本选不到无痕。
 func DetectProfiles(b Browser) []Profile {
+	bundleID := b.BundleID()
 	var profiles []Profile
-	if dir, ok := chromiumDataDir[b.BundleID()]; ok {
-		profiles = detectChromiumProfiles(dir)
-	} else if b.BundleID() == "org.mozilla.firefox" {
+	switch {
+	case chromiumDataDir[bundleID] != "":
+		profiles = detectChromiumProfiles(chromiumDataDir[bundleID])
+	case bundleID == "org.mozilla.firefox":
 		profiles = detectFirefoxProfiles()
+	default:
+		return nil // 不支持多账户/无痕（如 Safari）
 	}
-	// 只有 1 个默认配置时不值得展开（等同直接打开），返回空。
-	if len(profiles) <= 1 {
-		return nil
-	}
-	// 末尾加无痕
-	profiles = append(profiles, Profile{ID: "__incognito__", Name: i18n.T("picker.incognito"), Kind: "incognito"})
+	profiles = append(profiles, Profile{ID: IncognitoProfileID, Name: i18n.T("picker.incognito"), Kind: "incognito"})
 	return profiles
+}
+
+// profilesNeedChoice 判断打开前是否必须让用户挑账户：只有存在多个**真实**配置档
+// 时才必须选。无痕是合成项，不构成"必须选"的理由 —— 只有一个账户的用户点卡片
+// 应该直接打开，无痕走右键菜单。
+func profilesNeedChoice(profiles []Profile) bool {
+	n := 0
+	for _, p := range profiles {
+		if p.Kind != "incognito" {
+			n++
+		}
+	}
+	return n > 1
 }
 
 // BundleID 返回浏览器的 bundle id（darwin 上即 Exec/Icon 字段）。
@@ -217,6 +233,25 @@ func LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) erro
 		return runDetached(exe, append(args, url)...)
 	}
 	return LaunchBrowser(b, url, newWindow)
+}
+
+// launchForRule 按规则匹配结果启动浏览器 —— 两条 URL 入口（命令行 handleURL 与
+// Apple Event 的 openPicker）共用，避免"记住了账户却没用上"两边各漏一处。
+//
+// 规则指定了账户时走 LaunchBrowserProfile；未指定、或账户已被删除/浏览器不再支持
+// 多账户时退回普通打开 —— 宁可用默认账户打开，也不能什么都不开。
+// newWindow 由规则的"新窗口打开"开关决定，与账户选择互不干扰。
+func launchForRule(u string, result MatchResult) error {
+	if result.Browser == nil {
+		return fmt.Errorf("no browser to launch")
+	}
+	newWin := result.Rule != nil && result.Rule.OpenInNewWindow
+	if result.Rule != nil && result.Rule.Profile != "" {
+		if p := findProfileByID(*result.Browser, result.Rule.Profile); p != nil {
+			return LaunchBrowserProfile(*result.Browser, *p, u, newWin)
+		}
+	}
+	return LaunchBrowser(*result.Browser, u, newWin)
 }
 
 // appExecPath 读取 .app 的 CFBundleExecutable，返回包内二进制完整路径。

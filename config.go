@@ -46,16 +46,28 @@ const (
 	MatchRegex    MatchMode = "regex"    // 完整正则
 )
 
+// IncognitoProfileID 是 DetectProfiles 合成的"无痕"账户 ID。
+// 它不对应浏览器内任何真实配置档，启动时被翻译成浏览器的无痕参数
+// （Chromium 的 --incognito / --inprivate，Firefox 的 --private-window）。
+const IncognitoProfileID = "__incognito__"
+
 // Rule maps a URL/domain pattern to a browser
 type Rule struct {
-	ID              string    `json:"id"`
-	Pattern         string    `json:"pattern"`
-	Mode            MatchMode `json:"mode"`
-	Browser         string    `json:"browser"` // browser ID
-	Priority        int       `json:"priority"`
-	Enabled         bool      `json:"enabled"`
-	Comment         string    `json:"comment,omitempty"`
-	OpenInNewWindow bool      `json:"open_in_new_window,omitempty"` // true 时强制新窗口打开
+	ID      string    `json:"id"`
+	Pattern string    `json:"pattern"`
+	Mode    MatchMode `json:"mode"`
+	Browser string    `json:"browser"` // browser ID
+	// Profile 指定用该浏览器的哪个账户打开，值为 Profile.ID
+	// （如 Chrome 的 "Profile 1"，无痕为 IncognitoProfileID）。
+	// 空字符串 = 不指定账户，按浏览器默认账户打开。
+	//
+	// 之所以要存账户：选择器里选的若是"无痕"或某个子账号，只记浏览器的话
+	// 下次命中规则仍会用默认账户打开，用户的选择等于没生效。
+	Profile         string `json:"profile,omitempty"`
+	Priority        int    `json:"priority"`
+	Enabled         bool   `json:"enabled"`
+	Comment         string `json:"comment,omitempty"`
+	OpenInNewWindow bool   `json:"open_in_new_window,omitempty"` // true 时强制新窗口打开
 }
 
 // Config holds all application settings

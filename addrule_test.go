@@ -219,32 +219,37 @@ func TestMatchPatternModes(t *testing.T) {
 func TestValidateRuleInput(t *testing.T) {
 	existing := []Rule{
 		{ID: "r1", Pattern: "example.com", Mode: MatchExact, Browser: "chrome"},
+		{ID: "r2", Pattern: "example.com", Mode: MatchExact, Browser: "chrome", Profile: "Profile 1"},
 	}
 	cases := []struct {
 		name      string
 		pattern   string
 		mode      MatchMode
 		browser   string
+		profile   string
 		excludeID string
 		wantErr   bool
 	}{
-		{"空pattern", "   ", MatchExact, "chrome", "", true},
-		{"正常域名", "other.com", MatchExact, "chrome", "", false},
-		{"urlequal缺scheme", "example.com/a", MatchURLEqual, "chrome", "", true},
-		{"urlequal正常", "https://example.com/a", MatchURLEqual, "chrome", "", false},
-		{"exact带scheme", "https://example.com", MatchExact, "chrome", "", true},
-		{"exact带路径", "example.com/a", MatchExact, "chrome", "", true},
-		{"快捷方式含星号", "*.pdf", MatchSuffix, "chrome", "", true},
-		{"快捷方式正常", ".pdf", MatchSuffix, "chrome", "", false},
-		{"正则非法", "([", MatchRegex, "chrome", "", true},
-		{"正则正常", `.*\.com`, MatchRegex, "chrome", "", false},
-		{"与已有规则完全重复", "example.com", MatchExact, "chrome", "", true},
-		{"编辑自身不算重复", "example.com", MatchExact, "chrome", "r1", false},
-		{"同模式同内容但不同浏览器", "example.com", MatchExact, "safari", "", false},
+		{"空pattern", "   ", MatchExact, "chrome", "", "", true},
+		{"正常域名", "other.com", MatchExact, "chrome", "", "", false},
+		{"urlequal缺scheme", "example.com/a", MatchURLEqual, "chrome", "", "", true},
+		{"urlequal正常", "https://example.com/a", MatchURLEqual, "chrome", "", "", false},
+		{"exact带scheme", "https://example.com", MatchExact, "chrome", "", "", true},
+		{"exact带路径", "example.com/a", MatchExact, "chrome", "", "", true},
+		{"快捷方式含星号", "*.pdf", MatchSuffix, "chrome", "", "", true},
+		{"快捷方式正常", ".pdf", MatchSuffix, "chrome", "", "", false},
+		{"正则非法", "([", MatchRegex, "chrome", "", "", true},
+		{"正则正常", `.*\.com`, MatchRegex, "chrome", "", "", false},
+		{"与已有规则完全重复", "example.com", MatchExact, "chrome", "", "", true},
+		{"编辑自身不算重复", "example.com", MatchExact, "chrome", "", "r1", false},
+		{"同模式同内容但不同浏览器", "example.com", MatchExact, "safari", "", "", false},
+		// 规则的目标是"浏览器 + 账户"：同一域名用同一浏览器的不同账户是两条不同规则。
+		{"同浏览器另一账户不算重复", "example.com", MatchExact, "chrome", "Profile 2", "", false},
+		{"同浏览器同账户才算完全重复", "example.com", MatchExact, "chrome", "Profile 1", "", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := ValidateRuleInput(c.pattern, c.mode, c.browser, existing, c.excludeID)
+			err := ValidateRuleInput(c.pattern, c.mode, c.browser, c.profile, existing, c.excludeID)
 			if c.wantErr && err == nil {
 				t.Errorf("期望报错，实际通过：pattern=%q mode=%s", c.pattern, c.mode)
 			}

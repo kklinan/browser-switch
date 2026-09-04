@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Rules can now target a specific browser **account / profile** (`Rule.Profile`,
+  JSON `profile`): the add/edit rule dialog lists every account (and incognito) of
+  a browser as its own entry, e.g. `Google Chrome · 工作` / `Google Chrome · 无痕`.
+- The rule list now shows the account next to the browser name, so a rule that
+  remembers "incognito" no longer looks identical to one that remembers "Chrome".
+  A deleted account is shown as「账户已不存在」instead of silently vanishing.
+- Chromium/Firefox browsers now always expose an **incognito** entry — previously
+  a browser with a single profile returned no profiles at all, so most users had
+  no way to pick incognito in the picker.
 - New match mode `urlequal` (完整网址相等): compares the full URL including
   scheme / path / query / fragment, case-insensitively.
 - The add/edit rule dialog now shows a live hint under the match-mode field,
@@ -51,6 +60,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tray_icon`, `window_width`, `window_height`, and several unused helpers).
 
 ### Fixed
+- **"记住选择" now remembers the account you actually picked.** Previously only the
+  browser was stored in the rule, so choosing a sub-account or incognito and
+  ticking "remember" silently fell back to the default account on every later
+  visit. The account is now written to the rule and both URL entry points
+  (command line and Apple Event) launch through it via `launchForRule()`.
+- Picker cards and ⌘N now agree: both pop the account menu when a browser has
+  several real accounts, and both open directly when it has only one (incognito
+  stays available via right-click, with the card hinting at it).
 - `.gitignore` now ignores the current binary name `browser-switch` (the stale
   pre-rename binary name) plus `dist/` and `.DS_Store`.
 - Editing a rule no longer loses its match mode. The dialog used to re-run the

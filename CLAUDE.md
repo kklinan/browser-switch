@@ -93,16 +93,16 @@ go vet ./...
 | 文件 | 职责 | 关键符号 |
 |------|------|----------|
 | [main.go](main.go) | CLI 分派、`handleURL` 命令行路径、安装向导 UI | `main`、`handleURL`、`BuildInstallerUI` |
-| [config.go](config.go) | 数据模型 + JSON 持久化 + 加载时清理 | `Config`、`Browser`、`Rule`、`Profile`、`InitConfig`、`SaveConfig`、`NormalizeRules`、`isKnownMatchMode`、`FavoriteBrowsers` |
+| [config.go](config.go) | 数据模型 + JSON 持久化 + 加载时清理 | `Config`、`Browser`、`Rule`（含 `Profile`）、`Profile`、`IncognitoProfileID`、`InitConfig`、`SaveConfig`、`NormalizeRules`、`isKnownMatchMode`、`FavoriteBrowsers` |
 | [rules.go](rules.go) | 纯函数匹配引擎（无副作用，易测） | `MatchURL`、`matchPattern`、`matchWildcard`、`wildcardRegexp`、`ValidatePattern`、`ValidateRuleInput`、`SuggestMatchMode`、`findBrowserByID` |
 | [picker.go](picker.go) | 选择器 UI + 倒计时 + 快捷键 + 写规则 | `ShowPicker`、`setupPickerWindow`、`buildPickerUI`、`addRuleForURL`、`extractDomain`、`clickableURLLabel` |
-| [settings.go](settings.go) | 设置窗口三标签页 + 规则对话框 | `OpenSettingsWindow`、`reloadConfigInto`、`buildSettingsContent`、`buildBrowsersTab`、`buildRulesTab`、`buildGeneralTab`、`showAddRuleDialog`、`modeDisplayNames`、`modeFromDisplayName`、`modeHintText` |
+| [settings.go](settings.go) | 设置窗口三标签页 + 规则对话框 | `OpenSettingsWindow`、`reloadConfigInto`、`buildSettingsContent`、`buildBrowsersTab`、`buildRulesTab`、`buildGeneralTab`、`showAddRuleDialog`、`ruleTargetLabel`、`profileDisplayName`、`modeDisplayNames`、`modeFromDisplayName`、`modeHintText` |
 | [gui.go](gui.go) | 共享控件与主题工具 | `card`、`progressLine`、`shadowed`、`browserIcon`、`tcol`、`shortName` |
 | [constants.go](constants.go) | 应用名与 bundle ID | `AppName`、`AppBundleID`、`HelperExecName` |
 | [browsers_darwin.go](browsers_darwin.go) | 检测 + 启动（含新窗口） | `DetectBrowsers`、`LaunchBrowser`、`launchNewWindow`、`appleScriptString`、`looksLikeBundleID` |
 | [install_darwin.go](install_darwin.go) | `.app` 打包、签名、LaunchServices（cgo） | `Install`、`Uninstall`、`GetInstallInfo`、`CheckDefaultBrowser`、`SetSystemDefaultBrowser` |
 | [urlhandler_darwin.go](urlhandler_darwin.go) | Apple Event 接收（cgo）+ 单 App 主循环 | `installURLHandler`、`runAppModeGUI`、`goHandleAppleEventURL` |
-| [profiles_darwin.go](profiles_darwin.go) | 多账户检测与带参启动 | `DetectProfiles`、`LaunchBrowserProfile`、`appExecPath`、`Browser.BundleID` |
+| [profiles_darwin.go](profiles_darwin.go) | 多账户检测与带参启动 | `DetectProfiles`、`profilesNeedChoice`、`findProfileByID`、`LaunchBrowserProfile`、`launchForRule`、`appExecPath`、`Browser.BundleID` |
 | [icons_darwin.go](icons_darwin.go) | `.icns` → PNG 缓存 | `browserIconPath` |
 | [i18n/i18n.go](i18n/i18n.go) | 内嵌 7 语言包 | `Init`、`T`、`Tf`、`SetLanguage`、`SupportedLanguages` |
 
@@ -120,7 +120,9 @@ go vet ./...
 - 命中规则但 `findBrowserByID` 返回 nil 时**继续下一条规则**，不中断。
 - `wildcard` 编译结果有缓存（`wildcardCache` / `sync.Map`）；**`regex` 仍每次重新 `regexp.Compile`，无缓存**（见 ISSUES 性能章节）。
 
-**保存前的语义校验**：`ValidateRuleInput(pattern, mode, browserID, rules, excludeID)` 独立于 `ValidatePattern`。后者只保证语法可编译，前者捕捉"语法没问题但保存后一定不生效"或"毫无意义"的写法：`urlequal` 缺 `://`、`exact` 含 scheme 或路径、快捷方式里出现 `*`/`?`、完全重复的规则。新增匹配模式时，两个函数**都要**同步。`excludeID` 用于编辑场景排除规则自身。
+**保存前的语义校验**：`ValidateRuleInput(pattern, mode, browserID, profileID, rules, excludeID)` 独立于 `ValidatePattern`。后者只保证语法可编译，前者捕捉"语法没问题但保存后一定不生效"或"毫无意义"的写法：`urlequal` 缺 `://`、`exact` 含 scheme 或路径、快捷方式里出现 `*`/`?`、完全重复的规则。新增匹配模式时，两个函数**都要**同步。`excludeID` 用于编辑场景排除规则自身。
+
+**规则可以指定账户**：`Rule.Profile` 存账户 ID（无痕为 `IncognitoProfileID`），空串即"不指定"。「记住选择」选了具体账户时必须一并写入 —— 只记浏览器的话，命中规则后仍会用默认账户打开，用户的选择等于被静默丢弃。命中后的启动统一走 `launchForRule(u, result)`（[profiles_darwin.go](profiles_darwin.go)，两条 URL 入口共用）：有账户 → `LaunchBrowserProfile`，账户已被删除/浏览器不支持 → 退回 `LaunchBrowser`。重复判定的粒度是「浏览器 + 账户」，同一域名用 Chrome 的两个账号是两条不同规则。
 
 ### 3.2 Fyne 使用约定
 
@@ -143,6 +145,7 @@ LaunchBrowser(b Browser, url string, newWindow bool) error
 LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) error
 ```
 
+- 规则命中的启动统一走 `launchForRule(u, result)`：规则带账户时转 `LaunchBrowserProfile`，否则 `LaunchBrowser`；`handleURL` 与 `openPicker` 都必须用它，否则"记住了账户"只在一半入口生效。
 - 普通启动：`open -b <bundleID> <url>`（不加 `-n`，复用已开窗口）。
 - **带 profile 启动必须直接执行包内二进制**，因为 `open -b` 在浏览器已运行时会丢弃 `--profile-directory` 等参数。路径由 `appExecPath()` 解析 `CFBundleExecutable` 得到。
 - 用 `cmd.Start()` 而非 `Run()`，选择器不等浏览器退出。
@@ -166,10 +169,10 @@ LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) error
 
 - `i18n.Init()` 必须在**任何** `i18n.T()` 之前调用。`main()` 第一行就是它。
 - `flag.Usage` 里的 flag 描述文本是在 `Usage` 回调内延迟设置的，因为 `flag.BoolVar` 注册时 i18n 尚未初始化。
-- 新增 UI 文案需**同时更新 7 个语言包**（`i18n/locales/*.json`），每个文件当前 **163 个 key**。可用下面的脚本自检漏翻：
+- 新增 UI 文案需**同时更新 7 个语言包**（`i18n/locales/*.json`），每个文件当前 **165 个 key**。可用下面的脚本自检漏翻（无 `rg` 时用 `grep -rhoE` 替代）：
 
 ```bash
-rg -o 'i18n\.Tf?\("([^"]+)"' -r '$1' --no-filename . | sort -u > /tmp/used.txt
+grep -rhoE 'i18n\.Tf?\("[^"]+"' . | sed -E 's/i18n\.Tf?\("//; s/"$//' | sort -u > /tmp/used.txt
 for f in i18n/locales/*.json; do
   python3 -c "import json;print('\n'.join(sorted(json.load(open('$f')))))" > /tmp/have.txt
   echo "== $f 缺失："; comm -23 /tmp/used.txt /tmp/have.txt
@@ -186,9 +189,9 @@ done
 
 | 文件 | 覆盖 |
 |------|------|
-| [addrule_test.go](addrule_test.go) | `ValidatePattern`、`ValidateRuleInput`、`SuggestMatchMode`、`matchPattern` 七模式、快捷方式匹配完整 URL、`NormalizeRules` 保留快捷方式、`modeEquivalentWildcard`、优先级排序、禁用规则跳过、`removeRule`、去重逻辑 |
+| [addrule_test.go](addrule_test.go) | `ValidatePattern`、`ValidateRuleInput`（含账户维度的重复判定）、`SuggestMatchMode`、`matchPattern` 七模式、快捷方式匹配完整 URL、`NormalizeRules` 保留快捷方式、`modeEquivalentWildcard`、优先级排序、禁用规则跳过、`removeRule`、去重逻辑 |
 | [picker_decision_test.go](picker_decision_test.go) | `ShowPickerOnMiss` 分支决策（**测的是复制的 `decideAction`，非生产代码**） |
-| [remember_flow_test.go](remember_flow_test.go) | `addRuleForURL` 落盘 + 闭环匹配（会写临时目录，改 `configPath` 全局） |
+| [remember_flow_test.go](remember_flow_test.go) | `addRuleForURL` 落盘 + 闭环匹配、记住账户后 `Rule.Profile` 能带出来、账户级去重、`profilesNeedChoice`（会写临时目录，改 `configPath` 全局） |
 | [rules_flow_test.go](rules_flow_test.go) | 「记住选择」→ 下次匹配的 www 一致性 |
 
 **无 GUI 测试、无 cgo 层测试、无集成测试。** 新增测试时优先把逻辑抽成纯函数，而不是去测 Fyne 控件。

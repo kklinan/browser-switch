@@ -201,8 +201,10 @@ func ValidatePattern(pattern string, mode MatchMode) error {
 // 它与 ValidatePattern 的分工：后者只保证语法可编译，这里额外捕捉
 // "语法没问题但语义明显写错、保存后一定不生效"的情况。
 //
-// browserID 参与重复检测；excludeID 用于编辑场景排除规则自身，避免把自己判成重复。
-func ValidateRuleInput(pattern string, mode MatchMode, browserID string, rules []Rule, excludeID string) error {
+// browserID / profileID 参与重复检测（目标是"浏览器 + 账户"，同一个域名用 Chrome
+// 的不同账号打开是两条不同规则）；excludeID 用于编辑场景排除规则自身，避免把自己
+// 判成重复。
+func ValidateRuleInput(pattern string, mode MatchMode, browserID, profileID string, rules []Rule, excludeID string) error {
 	p := strings.TrimSpace(pattern)
 	if p == "" {
 		return fmt.Errorf(i18n.T("settings.add_rule.error.empty_pattern"))
@@ -236,13 +238,14 @@ func ValidateRuleInput(pattern string, mode MatchMode, browserID string, rules [
 		}
 	}
 
-	// 完全重复的规则（同 pattern + 同 mode + 同 browser）没有任何意义，且会让人
-	// 困惑于"改了怎么没生效"（被优先级相同的另一条抢先命中）。
+	// 完全重复的规则（同 pattern + 同 mode + 同浏览器 + 同账户）没有任何意义，
+	// 且会让人困惑于"改了怎么没生效"（被优先级相同的另一条抢先命中）。
 	for _, r := range rules {
 		if r.ID == excludeID {
 			continue
 		}
-		if r.Mode == mode && strings.EqualFold(strings.TrimSpace(r.Pattern), p) && r.Browser == browserID {
+		if r.Mode == mode && strings.EqualFold(strings.TrimSpace(r.Pattern), p) &&
+			r.Browser == browserID && r.Profile == profileID {
 			return fmt.Errorf(i18n.Tf("settings.add_rule.error.duplicate", p))
 		}
 	}
