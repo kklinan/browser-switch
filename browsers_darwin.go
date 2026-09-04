@@ -165,7 +165,21 @@ func macDisplayName(info macInfoPlist, appPath string) string {
 }
 
 // LaunchBrowser opens a URL in the specified browser (macOS).
-func LaunchBrowser(browser Browser, url string) error {
+//
+// newWindow 为 true 时强制新开窗口。注意不能只依赖 `open -n`：Chrome / Edge /
+// Safari 都是单实例应用，进程内用锁保证唯一，`open -n` 会被忽略、URL 照旧落到
+// 已有窗口的新标签页。因此这里按浏览器类型分别走原生方式：
+//   - Chromium 系 / Firefox：直接执行包内二进制并传 --new-window；
+//   - Safari：用 AppleScript 新建 document（它没有任何 CLI 开关）；
+//   - 其它：退回 `open -n`，尽力而为。
+func LaunchBrowser(browser Browser, url string, newWindow bool) error {
+	if newWindow {
+		if err := launchNewWindow(browser, url); err == nil {
+			return nil
+		}
+		// 原生的新窗口方式不可用时，退回下面的普通打开，总比什么都不做要好。
+	}
+
 	var cmd *exec.Cmd
 	switch {
 	case looksLikeBundleID(browser.Exec):
@@ -183,6 +197,55 @@ func LaunchBrowser(browser Browser, url string) error {
 		return fmt.Errorf("failed to start %s: %w: %s", browser.Name, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// launchNewWindow 用浏览器自己的方式新开一个窗口；不支持的浏览器返回 error，
+// 由调用方回退到普通打开。
+func launchNewWindow(browser Browser, url string) error {
+	bid := browser.BundleID()
+
+	// Safari 无 CLI 开关，只能靠 AppleScript 新建 document。
+	if bid == "com.apple.Safari" {
+		script := fmt.Sprintf(
+			`tell application "Safari" to make new document with properties {URL:%s}`,
+			appleScriptString(url),
+		)
+		out, err := exec.Command("/usr/bin/osascript", "-e", `tell application "Safari" to activate`, "-e", script).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("safari applescript: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+
+	// Chromium 系与 Firefox：直接跑二进制传 --new-window。
+	exe := appExecPath(browser.Desktop)
+	if exe == "" {
+		return fmt.Errorf("no executable for %s", browser.Name)
+	}
+	if _, ok := chromiumDataDir[bid]; ok || bid == "org.mozilla.firefox" {
+		if err := runDetached(exe, "--new-window", url); err != nil {
+			return fmt.Errorf("new window for %s: %w", browser.Name, err)
+		}
+		return nil
+	}
+
+	// 未知浏览器：尝试 `open -n`，单实例应用可能无效。
+	if browser.Desktop != "" {
+		out, err := exec.Command("/usr/bin/open", "-n", "-a", browser.Desktop, url).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("open -n: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	return fmt.Errorf("unsupported browser for new window: %s", browser.Name)
+}
+
+// appleScriptString 把 Go 字符串转成 AppleScript 字符串字面量并做必要转义，
+// 避免 URL 里的引号/反斜杠破坏脚本或造成注入。
+func appleScriptString(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
 }
 
 // looksLikeBundleID 粗略判断字符串是否为 macOS bundle identifier

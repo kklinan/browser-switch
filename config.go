@@ -26,27 +26,48 @@ type Profile struct {
 	Kind string `json:"kind"` // "default" / "incognito" / "profile"
 }
 
-// MatchMode defines how domain patterns are matched
+// MatchMode defines how domain patterns are matched.
+//
+// 分两类：
+//   - 基础模式：exact / urlequal —— 精确比较，语义最直白。
+//   - 通配家族：wildcard 是通用形态；contains / prefix / suffix 是它的三个
+//     "快捷方式"，供不熟悉 glob/正则语法的用户直接选，避免手写 * 号。
+//     三者在匹配时会展开为对应的通配语义（*p* / p* / *p），并对 host 与
+//     完整 URL 同时尝试，因此 ".pdf"、"https://" 这类写法也能正常工作。
 type MatchMode string
 
 const (
-	MatchExact    MatchMode = "exact"    // exact domain match
-	MatchWildcard MatchMode = "wildcard" // *.example.com, example.*
-	MatchRegex    MatchMode = "regex"    // full regex
-	MatchContains MatchMode = "contains" // substring match
-	MatchPrefix   MatchMode = "prefix"   // domain starts with
-	MatchSuffix   MatchMode = "suffix"   // domain ends with
+	MatchExact    MatchMode = "exact"    // 仅域名完全相等（host == pattern）
+	MatchURLEqual MatchMode = "urlequal" // 完整 URL 完全相等（包括 scheme/path/query/fragment）
+	MatchContains MatchMode = "contains" // 快捷方式：包含（≈ 通配 *pattern*）
+	MatchPrefix   MatchMode = "prefix"   // 快捷方式：以前缀开头（≈ 通配 pattern*）
+	MatchSuffix   MatchMode = "suffix"   // 快捷方式：以后缀结尾（≈ 通配 *pattern）
+	MatchWildcard MatchMode = "wildcard" // *.example.com, example.*  (glob: * 与 ?)
+	MatchRegex    MatchMode = "regex"    // 完整正则
 )
 
-// Rule maps a domain pattern to a browser
+// IncognitoProfileID 是 DetectProfiles 合成的"无痕"账户 ID。
+// 它不对应浏览器内任何真实配置档，启动时被翻译成浏览器的无痕参数
+// （Chromium 的 --incognito / --inprivate，Firefox 的 --private-window）。
+const IncognitoProfileID = "__incognito__"
+
+// Rule maps a URL/domain pattern to a browser
 type Rule struct {
-	ID       string    `json:"id"`
-	Pattern  string    `json:"pattern"`
-	Mode     MatchMode `json:"mode"`
-	Browser  string    `json:"browser"` // browser ID
-	Priority int       `json:"priority"`
-	Enabled  bool      `json:"enabled"`
-	Comment  string    `json:"comment,omitempty"`
+	ID      string    `json:"id"`
+	Pattern string    `json:"pattern"`
+	Mode    MatchMode `json:"mode"`
+	Browser string    `json:"browser"` // browser ID
+	// Profile 指定用该浏览器的哪个账户打开，值为 Profile.ID
+	// （如 Chrome 的 "Profile 1"，无痕为 IncognitoProfileID）。
+	// 空字符串 = 不指定账户，按浏览器默认账户打开。
+	//
+	// 之所以要存账户：选择器里选的若是"无痕"或某个子账号，只记浏览器的话
+	// 下次命中规则仍会用默认账户打开，用户的选择等于没生效。
+	Profile         string `json:"profile,omitempty"`
+	Priority        int    `json:"priority"`
+	Enabled         bool   `json:"enabled"`
+	Comment         string `json:"comment,omitempty"`
+	OpenInNewWindow bool   `json:"open_in_new_window,omitempty"` // true 时强制新窗口打开
 }
 
 // Config holds all application settings
@@ -215,6 +236,8 @@ func InitConfig() (*Config, error) {
 		return nil, err
 	}
 
+	NormalizeRules(cfg)
+
 	return cfg, nil
 }
 
@@ -227,6 +250,44 @@ func SaveConfig(cfg *Config) error {
 		return err
 	}
 	return os.WriteFile(configPath, data, 0644)
+}
+
+// NormalizeRules 对加载后的规则做最小化的就地清理：
+//  1. 丢弃 pattern 为空的规则（无法匹配任何东西，且会让规则列表出现空行）。
+//  2. 未知/空的 mode 兜底为 MatchExact，避免匹配时静默失效。
+//
+// 注意：contains / prefix / suffix 是通配的快捷方式，是一等公民，
+// 这里绝不把它们改写成 wildcard —— 保留用户原始意图，便于后续编辑。
+func NormalizeRules(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	changed := false
+	out := cfg.Rules[:0]
+	for _, r := range cfg.Rules {
+		if strings.TrimSpace(r.Pattern) == "" {
+			changed = true
+			continue
+		}
+		if !isKnownMatchMode(r.Mode) {
+			r.Mode = MatchExact
+			changed = true
+		}
+		out = append(out, r)
+	}
+	cfg.Rules = out
+	if changed {
+		_ = SaveConfig(cfg)
+	}
+}
+
+// isKnownMatchMode 判断 mode 是否为已知模式之一。
+func isKnownMatchMode(m MatchMode) bool {
+	switch m {
+	case MatchExact, MatchURLEqual, MatchContains, MatchPrefix, MatchSuffix, MatchWildcard, MatchRegex:
+		return true
+	}
+	return false
 }
 
 // RemoveConfig 删除整个配置目录及其中所有数据（供设置界面"卸载并清除数据"使用）。

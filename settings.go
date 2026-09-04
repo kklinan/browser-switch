@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image/color"
+	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kklinan/browser-switch/i18n"
@@ -30,13 +34,63 @@ func ShowSettings(cfg *Config) {
 	w.ShowAndRun()
 }
 
+// settingsWin 保证同时只有一个设置窗口。
+var settingsWin fyne.Window
+
 // OpenSettingsWindow 在已有 app 内开设置窗口（供选择器齿轮按钮复用，不另起 app）。
+//
+// 窗口若已存在则不再新建：先从磁盘重新加载最新配置（磁盘可能已被 CLI 或常驻
+// agent 改动过，不重载的话用户看到的会是过期数据，一保存还会把旧数据写回去覆盖
+// 掉别人的修改），再重建全部内容并置顶。
 func OpenSettingsWindow(a fyne.App, cfg *Config) {
+	if settingsWin != nil {
+		// 数据即将被重载，还开着的规则编辑窗口里填的是旧数据，先关掉避免误保存。
+		if ruleDialogWin != nil {
+			ruleDialogWin.Close()
+			ruleDialogWin = nil
+		}
+		reloadConfigInto(cfg)
+		settingsWin.SetContent(buildSettingsContent(a, cfg, settingsWin))
+		settingsWin.Show()
+		settingsWin.RequestFocus()
+		return
+	}
+
 	w := a.NewWindow(i18n.T("settings.window_title"))
+	settingsWin = w
+	w.SetOnClosed(func() {
+		// 规则窗口是设置窗口的子窗口，主窗口关了它不该继续留在屏幕上。
+		if ruleDialogWin != nil {
+			ruleDialogWin.Close()
+			ruleDialogWin = nil
+		}
+		if settingsWin == w {
+			settingsWin = nil
+		}
+	})
 	w.SetContent(buildSettingsContent(a, cfg, w))
 	w.Resize(fyne.NewSize(760, 560))
 	w.CenterOnScreen()
 	w.Show()
+}
+
+// reloadConfigInto 把磁盘上的最新配置就地写回 cfg 指向的结构体。
+// 就地赋值（而非返回新指针）很关键：选择器与设置窗口共享同一个 *Config，
+// 换指针的话只有一方能看到新数据。
+func reloadConfigInto(cfg *Config) {
+	if cfg == nil || configPath == "" {
+		return
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil || len(bytes.TrimSpace(data)) == 0 {
+		return // 读不到就保留内存中的现有配置，别把界面清空
+	}
+	fresh := DefaultConfig()
+	if err := json.Unmarshal(data, fresh); err != nil {
+		return // 配置损坏时同样保留现有值，交由下次正常启动流程处理
+	}
+	NormalizeRules(fresh)
+	*cfg = *fresh
 }
 
 // buildSettingsContent 构建设置窗口的标签页内容（不驱动主循环）。
@@ -171,11 +225,7 @@ func buildBrowsersTab(cfg *Config, refresh func()) fyne.CanvasObject {
 			if p == nil {
 				continue // 悬空：账户已删除
 			}
-			pname := p.Name
-			if p.Kind == "incognito" {
-				pname = i18n.T("picker.incognito")
-			}
-			label = shortName(b.Name) + " · " + pname
+			label = shortName(b.Name) + profileSep + profileDisplayName(*p)
 		}
 		pos++
 		keyc := key
@@ -247,10 +297,7 @@ func buildBrowsersTab(cfg *Config, refresh func()) fyne.CanvasObject {
 		// 展开的多账号：在该浏览器行下方缩进列出各账户，每个账户可独立收藏。
 		if len(profs) > 0 && browserExpanded[b.ID] {
 			for _, p := range profs {
-				label := p.Name
-				if p.Kind == "incognito" {
-					label = i18n.T("picker.incognito")
-				}
+				label := profileDisplayName(p)
 				fkey := encodeFavKey(b.ID, p.ID)
 				pHeart := widget.NewButton(ternary(isFav(fkey), i18n.T("settings.browsers.favorited"), i18n.T("settings.browsers.unfavorited")), func() { toggleFav(fkey) })
 				pHeart.Importance = widget.LowImportance
@@ -304,13 +351,39 @@ func buildBrowsersTab(cfg *Config, refresh func()) fyne.CanvasObject {
 
 // ---- 规则标签（完整规则编辑器）----
 
+// profileSep 是"浏览器 · 账户"组合展示的分隔符（规则列表与规则下拉框共用）。
+const profileSep = " · "
+
+// profileDisplayName 返回账户的展示名。无痕是合成项，其 Name 本就是 i18n 文案，
+// 这里统一走同一出口，避免各处再各自判断 Kind。
+func profileDisplayName(p Profile) string {
+	if p.Kind == "incognito" {
+		return i18n.T("picker.incognito")
+	}
+	return p.Name
+}
+
+// ruleTargetLabel 生成规则下拉项"浏览器[ · 账户]"的文本；profileID 为空即整浏览器。
+// 账户已被删除时退而显示原 ID，让用户在下拉里看得到"这条规则指向了不存在的账户"。
+func ruleTargetLabel(b Browser, profileID string) string {
+	if profileID == "" {
+		return shortName(b.Name)
+	}
+	for _, p := range DetectProfiles(b) {
+		if p.ID == profileID {
+			return shortName(b.Name) + profileSep + profileDisplayName(p)
+		}
+	}
+	return shortName(b.Name) + profileSep + profileID
+}
+
 func buildRulesTab(a fyne.App, cfg *Config, refresh func()) fyne.CanvasObject {
 	fg := tcol(theme.ColorNameForeground)
 	subtle := tcol(theme.ColorNamePlaceHolder)
 
 	// 新建按钮
 	addBtn := widget.NewButtonWithIcon(i18n.T("settings.rules.add_rule"), theme.ContentAddIcon(), func() {
-		showAddRuleDialog(a, cfg, refresh)
+		showAddRuleDialog(a, cfg, refresh, nil)
 	})
 
 	// 规则列表
@@ -326,6 +399,15 @@ func buildRulesTab(a fyne.App, cfg *Config, refresh func()) fyne.CanvasObject {
 		name := r.Browser
 		if b := findBrowserByID(r.Browser, cfg); b != nil {
 			name = shortName(b.Name)
+			if r.Profile != "" {
+				// 规则指定了账户：必须一并显示，否则"记住了无痕/某账号"在列表里
+				// 看起来和"记住了 Chrome"完全一样，出了问题无从排查。
+				if p := findProfileByID(*b, r.Profile); p != nil {
+					name += profileSep + profileDisplayName(*p)
+				} else {
+					name += profileSep + i18n.T("settings.rules.profile_missing")
+				}
+			}
 		}
 
 		modeText := modeDisplayName(r.Mode)
@@ -339,11 +421,22 @@ func buildRulesTab(a fyne.App, cfg *Config, refresh func()) fyne.CanvasObject {
 			plainText("→", 16, subtle),
 			hSpace(4),
 			plainText(name, 13, fg),
+			// "新窗口打开" 角标，便于一眼看出哪些规则有特殊行为。
+			func() fyne.CanvasObject {
+				if r.OpenInNewWindow {
+					return container.NewHBox(hSpace(6), plainText(i18n.T("settings.rules.badge_new_window"), 11, subtle))
+				}
+				return hSpace(0)
+			}(),
 		)
 
 		row := container.NewBorder(nil, nil,
 			container.NewPadded(rowContent),
 			container.NewHBox(
+				iconButton(theme.DocumentCreateIcon(), func() {
+					rr := r
+					showAddRuleDialog(a, cfg, refresh, &rr)
+				}),
 				iconButton(theme.CancelIcon(), func() {
 					cfg.Rules = removeRule(cfg.Rules, r.ID)
 					_ = SaveConfig(cfg)
@@ -367,10 +460,34 @@ func buildRulesTab(a fyne.App, cfg *Config, refresh func()) fyne.CanvasObject {
 	)
 }
 
+// ruleDialogWin 保证"添加/编辑规则"窗口全局最多一个：
+// 重复点击添加、或连点不同规则的编辑按钮时，先关掉旧窗口再开新的，
+// 避免叠出一堆规则窗口（用户会以为自己改的是最上面那个）。
+var ruleDialogWin fyne.Window
+
 // showAddRuleDialog 显示添加规则对话框（复用已有 app，避免嵌套事件循环）。
-// refresh 在成功新增规则后调用，用于重建规则列表使新规则立即可见。
-func showAddRuleDialog(a fyne.App, cfg *Config, refresh func()) {
-	w := a.NewWindow(i18n.T("settings.add_rule.title"))
+// editing 非 nil 时即为"编辑现有规则"模式 —— 预填字段 + 提交时覆盖原 rule。
+// refresh 在成功新增/修改规则后调用，用于重建规则列表使新规则立即可见。
+func showAddRuleDialog(a fyne.App, cfg *Config, refresh func(), editing *Rule) {
+	// 单例：关掉已存在的规则窗口（无论它正在添加还是编辑），只保留即将创建的这一个。
+	if ruleDialogWin != nil {
+		ruleDialogWin.Close()
+		ruleDialogWin = nil
+	}
+
+	w := a.NewWindow(i18n.T(func() string {
+		if editing == nil {
+			return "settings.add_rule.title"
+		}
+		return "settings.edit_rule.title"
+	}()))
+	ruleDialogWin = w
+	// 用户手动关闭（红点 / 取消）时清掉引用，否则下次点击会试图关闭一个已销毁的窗口。
+	w.SetOnClosed(func() {
+		if ruleDialogWin == w {
+			ruleDialogWin = nil
+		}
+	})
 
 	// 匹配内容输入
 	patternEntry := widget.NewEntry()
@@ -379,38 +496,69 @@ func showAddRuleDialog(a fyne.App, cfg *Config, refresh func()) {
 	// 匹配模式选择
 	modeNames := modeDisplayNames()
 	modeSelect := widget.NewSelect(modeNames, nil)
-	modeSelect.SetSelectedIndex(0)
 
-	// 根据输入内容自动推测匹配模式
-	patternEntry.OnChanged = func(s string) {
-		if s == "" {
-			return
+	// 模式提示：随模式与 pattern 实时更新，对三个快捷方式展示等价的通配写法。
+	modeHint := widget.NewLabel(modeHintText(MatchExact, ""))
+	modeHint.Wrapping = fyne.TextWrapWord
+	updateModeHint := func() {
+		modeHint.SetText(modeHintText(modeFromDisplayName(modeSelect.Selected), patternEntry.Text))
+	}
+
+	// modeAuto 表示"模式仍由自动推测掌控"。一旦用户手动选了模式就置为 false，
+	// 之后无论怎么改 pattern 都不再自动改写 —— 否则用户选了"包含/后缀"这类
+	// 快捷方式后，每敲一个字符模式就被重置，编辑规则时更是会直接把原模式冲掉。
+	//
+	// setProgrammatically 用于区分"代码设置"与"用户操作"：SetSelected 也会触发
+	// OnChanged，不加这层保护的话自动推测本身会被误判成用户手动选择。
+	modeAuto := true
+	setProgrammatically := false
+	setMode := func(m MatchMode) {
+		setProgrammatically = true
+		modeSelect.SetSelected(modeDisplayName(m))
+		setProgrammatically = false
+	}
+	setMode(MatchExact)
+
+	modeSelect.OnChanged = func(string) {
+		if !setProgrammatically {
+			modeAuto = false
 		}
-		suggested := SuggestMatchMode(s)
-		modeSelect.SetSelected(modeDisplayName(suggested))
+		updateModeHint()
 	}
 
-	// 浏览器选择
-	browserSelect := widget.NewSelect(nil, nil)
-	var browserID string
-	for _, b := range cfg.Browsers {
-		browserSelect.Options = append(browserSelect.Options, shortName(b.Name))
+	patternEntry.OnChanged = func(s string) {
+		if modeAuto && strings.TrimSpace(s) != "" {
+			setMode(SuggestMatchMode(s))
+		}
+		updateModeHint()
 	}
-	if cfg.DefaultBrowser != "" {
-		for _, b := range cfg.Browsers {
-			if b.ID == cfg.DefaultBrowser {
-				browserSelect.SetSelected(shortName(b.Name))
-				browserID = b.ID
-				break
-			}
+	updateModeHint()
+
+	// 浏览器选择：多账户浏览器会展开成多项（"Chrome"、"Chrome · 工作账号"、
+	// "Chrome · 无痕"），因为规则记住的是"浏览器 + 账户"这个组合 —— 只选浏览器
+	// 的话，命中规则时仍会用默认账户打开。
+	browserSelect := widget.NewSelect(nil, nil)
+	var browserID, profileID string
+	type ruleTarget struct{ browser, profile string }
+	targets := map[string]ruleTarget{} // 选项文本 → 目标（浏览器 + 账户）
+	addTarget := func(label string, t ruleTarget) {
+		if _, dup := targets[label]; dup {
+			// 极少数情况下两个浏览器 shortName 相同：加序号消歧，避免反查串味。
+			label = fmt.Sprintf("%s (%d)", label, len(browserSelect.Options))
+		}
+		targets[label] = t
+		browserSelect.Options = append(browserSelect.Options, label)
+	}
+	for _, b := range cfg.Browsers {
+		addTarget(shortName(b.Name), ruleTarget{browser: b.ID})
+		for _, p := range DetectProfiles(b) {
+			addTarget(ruleTargetLabel(b, p.ID), ruleTarget{browser: b.ID, profile: p.ID})
 		}
 	}
 	browserSelect.OnChanged = func(s string) {
-		for _, b := range cfg.Browsers {
-			if shortName(b.Name) == s {
-				browserID = b.ID
-				return
-			}
+		if t, ok := targets[s]; ok {
+			browserID = t.browser
+			profileID = t.profile
 		}
 	}
 
@@ -422,59 +570,132 @@ func showAddRuleDialog(a fyne.App, cfg *Config, refresh func()) {
 	commentEntry := widget.NewEntry()
 	commentEntry.SetPlaceHolder(i18n.T("settings.add_rule.comment_placeholder"))
 
+	// 是否在新窗口打开
+	newWinChk := widget.NewCheck(i18n.T("settings.add_rule.field.new_window"), nil)
+	newWinChk.SetChecked(false)
+
+	// 编辑模式：预填所有字段。
+	if editing != nil {
+		// 先设模式再设 pattern：SetText 会触发 OnChanged，若此时 modeAuto 仍为
+		// true，自动推测就会把用户原本保存的模式覆盖掉（这正是"修改规则时匹配
+		// 模式不对"的根因）。setMode 之后再显式关闭自动推测。
+		setMode(editing.Mode)
+		modeAuto = false
+		patternEntry.SetText(editing.Pattern)
+		for _, b := range cfg.Browsers {
+			if b.ID == editing.Browser {
+				browserSelect.SetSelected(ruleTargetLabel(b, editing.Profile))
+				browserID = b.ID
+				profileID = editing.Profile
+				break
+			}
+		}
+		priorityEntry.SetText(strconv.Itoa(editing.Priority))
+		commentEntry.SetText(editing.Comment)
+		newWinChk.SetChecked(editing.OpenInNewWindow)
+	} else if cfg.DefaultBrowser != "" {
+		// 新建模式：预选默认浏览器（不指定账户）
+		for _, b := range cfg.Browsers {
+			if b.ID == cfg.DefaultBrowser {
+				browserSelect.SetSelected(shortName(b.Name))
+				browserID = b.ID
+				profileID = ""
+				break
+			}
+		}
+	}
+
+	// 保存时的错误提示：固定在表单顶部就地展示，比弹一个模态对话框轻量，
+	// 且关掉提示后用户输入的内容依然看得见。
+	errLabel := widget.NewLabel("")
+	errLabel.Wrapping = fyne.TextWrapWord
+	errLabel.TextStyle = fyne.TextStyle{Bold: true}
+	errLabel.Importance = widget.DangerImportance
+	errLabel.Hide()
+	fail := func(err error) {
+		errLabel.SetText(err.Error())
+		errLabel.Show()
+	}
+
 	// 构建表单
 	form := &widget.Form{
 		Items: []*widget.FormItem{
 			{Text: i18n.T("settings.add_rule.field.pattern"), Widget: patternEntry, HintText: i18n.T("settings.add_rule.hint.pattern")},
-			{Text: i18n.T("settings.add_rule.field.mode"), Widget: modeSelect, HintText: i18n.T("settings.add_rule.hint.mode")},
+			{Text: i18n.T("settings.add_rule.field.mode"), Widget: container.NewVBox(modeSelect, modeHint), HintText: i18n.T("settings.add_rule.hint.mode")},
 			{Text: i18n.T("settings.add_rule.field.browser"), Widget: browserSelect, HintText: i18n.T("settings.add_rule.hint.browser")},
 			{Text: i18n.T("settings.add_rule.field.priority"), Widget: priorityEntry, HintText: i18n.T("settings.add_rule.hint.priority")},
 			{Text: i18n.T("settings.add_rule.field.comment"), Widget: commentEntry, HintText: i18n.T("settings.add_rule.hint.comment")},
+			{Text: i18n.T("settings.add_rule.field.new_window"), Widget: newWinChk, HintText: i18n.T("settings.add_rule.hint.new_window")},
 		},
 		OnSubmit: func() {
-			pattern := patternEntry.Text
+			errLabel.Hide()
+
+			pattern := strings.TrimSpace(patternEntry.Text)
 			if pattern == "" {
-				dialog.ShowError(fmt.Errorf(i18n.T("settings.add_rule.error.empty_pattern")), w)
+				fail(fmt.Errorf(i18n.T("settings.add_rule.error.empty_pattern")))
 				return
 			}
 
 			mode := modeFromDisplayName(modeSelect.Selected)
 
-			// 正则模式额外校验语法
-			if mode == MatchRegex {
-				if err := ValidatePattern(pattern, mode); err != nil {
-					dialog.ShowError(fmt.Errorf(i18n.T("settings.add_rule.error.invalid_regex"), err), w)
-					return
-				}
-			}
-
 			if browserID == "" {
-				dialog.ShowError(fmt.Errorf(i18n.T("settings.add_rule.error.no_browser")), w)
+				fail(fmt.Errorf(i18n.T("settings.add_rule.error.no_browser")))
 				return
 			}
 
 			priority := 50
-			if ps := priorityEntry.Text; ps != "" {
+			if ps := strings.TrimSpace(priorityEntry.Text); ps != "" {
 				if n, err := strconv.Atoi(ps); err == nil && n >= 0 {
 					priority = n
 				} else {
-					dialog.ShowError(fmt.Errorf(i18n.T("settings.add_rule.error.invalid_priority")), w)
+					fail(fmt.Errorf(i18n.T("settings.add_rule.error.invalid_priority")))
 					return
 				}
 			}
 
-			rule := Rule{
-				ID:       fmt.Sprintf("user_%s_%d", pattern, time.Now().UnixNano()),
-				Pattern:  pattern,
-				Mode:     mode,
-				Browser:  browserID,
-				Priority: priority,
-				Enabled:  true,
-				Comment:  commentEntry.Text,
+			// 浏览器必须在语义校验之前确定：重复检测需要一并比对目标浏览器。
+			excludeID := ""
+			if editing != nil {
+				excludeID = editing.ID
+			}
+			if err := ValidateRuleInput(pattern, mode, browserID, profileID, cfg.Rules, excludeID); err != nil {
+				fail(err)
+				return
 			}
 
-			cfg.Rules = append(cfg.Rules, rule)
-			_ = SaveConfig(cfg)
+			if editing != nil {
+				// 原地更新：保持 ID 不变。
+				for i := range cfg.Rules {
+					if cfg.Rules[i].ID == editing.ID {
+						cfg.Rules[i].Pattern = pattern
+						cfg.Rules[i].Mode = mode
+						cfg.Rules[i].Browser = browserID
+						cfg.Rules[i].Profile = profileID
+						cfg.Rules[i].Priority = priority
+						cfg.Rules[i].Comment = strings.TrimSpace(commentEntry.Text)
+						cfg.Rules[i].OpenInNewWindow = newWinChk.Checked
+						break
+					}
+				}
+			} else {
+				rule := Rule{
+					ID:              fmt.Sprintf("user_%s_%d", pattern, time.Now().UnixNano()),
+					Pattern:         pattern,
+					Mode:            mode,
+					Browser:         browserID,
+					Profile:         profileID,
+					Priority:        priority,
+					Enabled:         true,
+					Comment:         strings.TrimSpace(commentEntry.Text),
+					OpenInNewWindow: newWinChk.Checked,
+				}
+				cfg.Rules = append(cfg.Rules, rule)
+			}
+			if err := SaveConfig(cfg); err != nil {
+				// 写盘失败必须让用户知道：否则窗口关掉后规则其实没保存，下次打开就没了。
+				fail(err)
+				return
+			}
 			if refresh != nil {
 				refresh()
 			}
@@ -483,14 +704,20 @@ func showAddRuleDialog(a fyne.App, cfg *Config, refresh func()) {
 		OnCancel: func() {
 			w.Close()
 		},
-		SubmitText: i18n.T("settings.add_rule.submit"),
+		SubmitText: i18n.T(func() string {
+			if editing == nil {
+				return "settings.add_rule.submit"
+			}
+			return "settings.edit_rule.submit"
+		}()),
 		CancelText: i18n.T("common.cancel"),
 	}
 
-	w.SetContent(container.NewPadded(form))
-	w.Resize(fyne.NewSize(520, 380))
+	w.SetContent(container.NewPadded(container.NewVBox(errLabel, form)))
+	w.Resize(fyne.NewSize(520, 500))
 	w.CenterOnScreen()
 	w.Show()
+	w.RequestFocus()
 }
 
 // removeRule 从规则列表中移除指定 ID 的规则
@@ -756,20 +983,25 @@ func indexOf(ss []string, s string) int {
 // ---- i18n 辅助：匹配模式名称的翻译与反向查找 ----
 
 // modeDisplayNames 返回当前语言下所有匹配模式的展示名列表。
+// 顺序刻意从"最直白"排到"最灵活"：精确 → 三个快捷方式 → 通配 → 正则，
+// 让不熟悉 glob/正则的用户在前几项里就能找到自己要的。
 func modeDisplayNames() []string {
 	return []string{
 		i18n.T("settings.rules.mode.exact"),
-		i18n.T("settings.rules.mode.wildcard"),
-		i18n.T("settings.rules.mode.regex"),
+		i18n.T("settings.rules.mode.urlequal"),
 		i18n.T("settings.rules.mode.contains"),
 		i18n.T("settings.rules.mode.prefix"),
 		i18n.T("settings.rules.mode.suffix"),
+		i18n.T("settings.rules.mode.wildcard"),
+		i18n.T("settings.rules.mode.regex"),
 	}
 }
 
 // modeDisplayName 返回给定 MatchMode 的本地化展示名。
 func modeDisplayName(m MatchMode) string {
 	switch m {
+	case MatchURLEqual:
+		return i18n.T("settings.rules.mode.urlequal")
 	case MatchWildcard:
 		return i18n.T("settings.rules.mode.wildcard")
 	case MatchRegex:
@@ -788,6 +1020,8 @@ func modeDisplayName(m MatchMode) string {
 // modeFromDisplayName 根据展示名反查 MatchMode 常量。
 func modeFromDisplayName(display string) MatchMode {
 	switch display {
+	case i18n.T("settings.rules.mode.urlequal"):
+		return MatchURLEqual
 	case i18n.T("settings.rules.mode.wildcard"):
 		return MatchWildcard
 	case i18n.T("settings.rules.mode.regex"):
@@ -801,4 +1035,50 @@ func modeFromDisplayName(display string) MatchMode {
 	default:
 		return MatchExact
 	}
+}
+
+// modeEquivalentWildcard 返回三个"快捷方式"模式对应的通配写法，用于向用户
+// 展示"你选的其实等价于这个"，顺便帮他们过渡到 wildcard。非快捷方式返回空串。
+func modeEquivalentWildcard(m MatchMode, pattern string) string {
+	switch m {
+	case MatchContains:
+		return "*" + pattern + "*"
+	case MatchPrefix:
+		return pattern + "*"
+	case MatchSuffix:
+		return "*" + pattern
+	}
+	return ""
+}
+
+// modeHintText 生成"匹配模式"字段下方的动态说明，随模式与 pattern 实时更新。
+// 对三个快捷方式额外展示等价的通配写法，降低理解成本。
+func modeHintText(m MatchMode, pattern string) string {
+	p := strings.TrimSpace(pattern)
+	if p == "" {
+		p = "…"
+	}
+	var base string
+	switch m {
+	case MatchExact:
+		base = i18n.T("settings.add_rule.modehint.exact")
+	case MatchURLEqual:
+		base = i18n.T("settings.add_rule.modehint.urlequal")
+	case MatchContains:
+		base = i18n.T("settings.add_rule.modehint.contains")
+	case MatchPrefix:
+		base = i18n.T("settings.add_rule.modehint.prefix")
+	case MatchSuffix:
+		base = i18n.T("settings.add_rule.modehint.suffix")
+	case MatchWildcard:
+		base = i18n.T("settings.add_rule.modehint.wildcard")
+	case MatchRegex:
+		base = i18n.T("settings.add_rule.modehint.regex")
+	default:
+		base = i18n.T("settings.add_rule.modehint.exact")
+	}
+	if eq := modeEquivalentWildcard(m, p); eq != "" {
+		base += "\n" + i18n.Tf("settings.add_rule.modehint.equivalent", eq)
+	}
+	return base
 }

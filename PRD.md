@@ -68,6 +68,38 @@ Browser Switch 是一款 macOS 桌面工具。注册为系统默认浏览器后�
 
 ---
 
+### F2.5 浏览器启动与新窗口打开
+
+**用户故事**：作为用户，我希望某些链接（如需要登录的工作后台）强制在新窗口打开，而不是复用已有窗口的标签页。
+
+**实现方式**（[browsers_darwin.go](browsers_darwin.go)、[profiles_darwin.go](profiles_darwin.go)）：
+
+两个入口都带 `newWindow bool` 参数：
+
+```go
+LaunchBrowser(b Browser, url string, newWindow bool) error
+LaunchBrowserProfile(b Browser, p Profile, url string, newWindow bool) error
+```
+
+- **普通启动**：`open -b <bundleID> <url>`，不加 `-n` 以复用已开窗口
+- **带 profile 启动**：必须直接执行包内二进制，因为 `open -b` 在浏览器已运行时会丢弃 `--profile-directory` 等参数。路径由 `appExecPath()` 解析 `CFBundleExecutable` 得到
+- 用 `cmd.Start()` 而非 `Run()`，选择器不等浏览器退出
+
+**`newWindow` 不能只用 `open -n`**：Chrome / Edge / Safari 都是**单实例应用**，进程内用锁保证唯一，`open -n` 会被直接忽略、URL 照旧进已有窗口的新标签页。`launchNewWindow()` 因此按类型分派：
+
+| 浏览器 | 方式 |
+|--------|------|
+| Chromium 系（Chrome/Edge/Brave/Vivaldi/Opera） | 执行二进制 + `--new-window` |
+| Firefox | 执行二进制 + `--new-window` |
+| Safari | AppleScript `make new document`（**它没有任何 CLI 开关**） |
+| 其它 | 退回 `open -n`（单实例应用可能无效） |
+
+全部失败时**降级为普通打开**——宁可开在已有窗口，也不能打不开。AppleScript 拼串走 `appleScriptString()` 转义反斜杠与引号。
+
+**规则绑定**：`Rule.OpenInNewWindow`（JSON `open_in_new_window`）为 true 时，规则命中路径（`handleURL`、`openPicker`）会把该标志透传给 `LaunchBrowser`。选择器手动点击与倒计时回退一律传 `false`。
+
+---
+
 ### F3. URL 规则匹配引擎
 
 **用户故事**：作为用户，我希望为不同域名设置不同浏览器，点击时自动路由。
@@ -77,21 +109,25 @@ Browser Switch 是一款 macOS 桌面工具。注册为系统默认浏览器后�
 | 模式 | 匹配对象 | 示例 |
 |------|----------|------|
 | `exact` | host 全等 | `github.com` |
-| `wildcard` | host（`*` `?` 转译为正则） | `*.google.com` |
+| `urlequal` | 完整网址全等（含 scheme / 路径 / 查询串），忽略大小写 | `https://github.com/a/b` |
+| `wildcard` | host **或**完整 URL（`*` `?` 转译为正则，结果带缓存） | `*.google.com`、`*/settings` |
 | `regex` | host **或**完整 URL | `.*\.(test\|staging)\..*` |
-| `contains` | host **或**完整 URL 子串 | `login` |
-| `prefix` | host 前缀 | `dev.` |
-| `suffix` | host 后缀 | `.cn` |
+| `contains` | host **或**完整 URL 子串（≈ `*p*`） | `login` |
+| `prefix` | host **或**完整 URL 前缀（≈ `p*`） | `dev.`、`https://` |
+| `suffix` | host **或**完整 URL 后缀（≈ `*p`） | `.cn`、`.pdf` |
 
 - 匹配前将规则按 `priority` **降序**排序（副本排序，不改动原配置），首个命中的启用规则即返回
 - `enabled=false` 的规则跳过
 - 命中规则但其 `browser` ID 在配置中找不到对应浏览器时，继续尝试下一条规则
 - **www 归一化**：先用原始 host 匹配一次，未中且 host 带 `www.` 前缀时用剥离后的 host 再匹配一次。因此「记住选择」写入的 `example.com` 也能命中 `www.example.com`
 - pattern 与 host 在比较前均转为小写
+- **`exact` / `urlequal` 是精确比较，只看各自的目标串；其余模式对 host 与完整 URL 各试一次（`||`）。** 这是必须的：`.pdf`、`https://`、`*/settings` 根本不出现在 host 里
+- `contains` / `prefix` / `suffix` 是 `wildcard` 的**快捷方式**，面向不熟悉 glob/正则的用户，**不解释** `*` 与 `?`（按字面量处理）
 
 **辅助能力**：
-- `ValidatePattern(pattern, mode)`：空 pattern 报错；`regex` 模式额外校验语法可编译
-- `SuggestMatchMode(pattern)`：含 `\ [ ] ( ) |` → `regex`；含 `* ?` → `wildcard`；否则 `exact`。用于添加规则对话框的实时模式推测
+- `ValidatePattern(pattern, mode)`：空 pattern 报错；`regex` 模式额外校验语法可编译；`wildcard` 转译后校验正则可用
+- `ValidateRuleInput(pattern, mode, browserID, profileID, rules, excludeID)`：保存前的**语义**校验，捕捉"语法合法但保存后一定不生效"或"毫无意义"的写法——`urlequal` 缺 `://`、`exact` 含 scheme 或路径、快捷方式里出现 `*`/`?`、完全重复的规则（**同 pattern + 同 mode + 同浏览器 + 同账户**才算重复）。`excludeID` 用于编辑场景排除自身
+- `SuggestMatchMode(pattern)`：含 `\ [ ] ( ) |` → `regex`；含 `://` → `urlequal`；含 `* ?` → `wildcard`；否则 `exact`。用于添加规则对话框的实时模式推测
 - `--test <url>`：只输出匹配结果与 MatchLog，不启动浏览器
 
 ---
@@ -122,12 +158,18 @@ Browser Switch 是一款 macOS 桌面工具。注册为系统默认浏览器后�
 | 右键点击多 profile 卡片 | 弹出账户菜单（锚定在卡片下方） |
 | `⌘1`~`⌘9` | 打开完整列表中第 N 个浏览器（含被「更多」折叠的），使用默认 profile |
 | 数字键 `1`~`9` | 同 ⌘N |
+| `⌘R` | 展开完整浏览器列表，与点击「更多」卡片完全等价（复用同一个 `expand()`） |
+| 点击顶部地址栏 | 把完整 URL 写入剪贴板（`clickableURLLabel`，基于 `widget.Hyperlink` 劫持 `OnTapped`） |
 | `Enter` / `Return` | 用默认浏览器打开 |
 | `Esc` | 关闭选择器，不打开任何浏览器 |
 
 **并发保护**：`atomic.Bool` 保证「打开浏览器」动作只执行一次，避免快捷键与倒计时同时触发导致重复开窗。
 
-**记住选择**：勾选后调用 `addRuleForURL()`，用 `extractDomain()`（剥离 scheme / www / 路径 / 端口 / query）得到的 host 写入一条 `exact` 规则，`priority=100`，`comment="Auto-created for <url>"`。同 host + 同 browser 已存在时跳过（去重）。**仅记录浏览器，不记录 profile。**
+**倒计时暂停**：点击齿轮打开设置时，通过 `close(stopCh)` 立即中断倒计时的 `select` 等待并隐藏倒计时区。倒计时的等待用 `select { time.After / stopCh }` 而非固定 `time.Sleep`，否则会出现「刚点开设置、1 秒后又被自动打开浏览器关掉」的竞态。`sync.Once` 保证 `stopCh` 只关闭一次。
+
+**记住选择**：勾选后调用 `addRuleForURL()`，用 `extractDomain()`（剥离 scheme / www / 路径 / 端口 / query）得到的 host 写入一条 `exact` 规则，`priority=100`，`comment="Auto-created for <url>"`。同 host + 同浏览器 + 同账户已存在时跳过（去重）。
+
+**账户一并记住**：从账户菜单里选定的子账号 / 无痕会写入 `Rule.Profile`（账户 ID，无痕为 `__incognito__`），命中规则时由 `launchForRule()` 走 `LaunchBrowserProfile()`；只选整浏览器时该字段为空，行为与过去一致。只记浏览器的话，用户选的"无痕/某账号"下次打开会被静默忽略。
 
 ---
 
@@ -178,9 +220,10 @@ Browser Switch 是一款 macOS 桌面工具。注册为系统默认浏览器后�
 
 - **Chromium 家族**：读取 `~/Library/Application Support/<映射目录>/Local State` 的 `profile.info_cache`。已映射：Chrome、Chrome Canary、Edge、Brave、Vivaldi、Opera
 - **Firefox**：解析 `~/Library/Application Support/Firefox/profiles.ini` 的 `[ProfileN]` 段
-- 检测到 **≤1 个** profile 时返回 `nil`（单账户展开菜单无意义）
-- 检测到 ≥2 个时，在列表末尾追加一个合成的「无痕模式」条目
+- 末尾始终追加一个合成的「无痕模式」条目（`__incognito__`）——**即便只检测到默认这一个 profile**。多数用户就只有默认账户，此前"≤1 个就返回 nil"让他们在选择器里根本选不到无痕
+- 不支持多账户的浏览器（如 Safari）仍返回 `nil`
 - 默认 profile 排首位，其余按名称稳定排序
+- `profilesNeedChoice(profiles)` 判断打开前是否**必须**挑账户：只有存在多个真实 profile 时才必须（无痕是合成项，不算）。单账户浏览器点卡片直接打开，无痕走右键菜单
 
 **启动方式**（关键约束）：必须**直接执行 `.app` 包内的二进制**并传参，因为浏览器已在运行时 `open -b` 会忽略 `--profile-directory` 等参数。
 - Chromium：`<exe> --profile-directory=<ID> <url>`
@@ -193,17 +236,24 @@ Browser Switch 是一款 macOS 桌面工具。注册为系统默认浏览器后�
 
 ### F9. 规则管理
 
-- 设置「规则」标签按 `priority` 降序列出：`模式徽章 | pattern | → | 浏览器名 | 删除按钮`
-- 「添加规则」打开独立窗口表单（复用当前 app 实例，避免嵌套事件循环）：
-  - 匹配内容（输入时实时调用 `SuggestMatchMode` 自动切换模式下拉）
-  - 匹配模式（6 选 1，本地化显示名）
-  - 目标浏览器（默认预选 `default_browser`）
+- 设置「规则」标签按 `priority` 降序列出：`模式徽章 | pattern | → | 浏览器名[ · 账户名] |「新窗口」角标 | 编辑按钮 | 删除按钮`。规则指定了账户时**必须显示账户名**，否则"记住了无痕"和"记住了 Chrome"在列表里长得一样；账户已删除时显示「账户已不存在」
+- 「添加规则」/「编辑规则」打开独立窗口表单（复用当前 app 实例，避免嵌套事件循环）：
+  - 匹配内容（输入时实时调用 `SuggestMatchMode` 自动切换模式下拉；**用户一旦手动选过模式就不再自动覆盖**）
+  - 匹配模式（7 选 1，本地化显示名；选中项下方实时显示该模式的说明，三个快捷方式额外展示等价的通配写法）
+  - 目标浏览器（下拉逐项列出「浏览器」与「浏览器 · 账户」，含无痕；新建时预选 `default_browser`，即不指定账户）
   - 优先级（默认 `50`，须为非负整数）
   - 备注（可选）
-- 提交时校验：pattern 非空、regex 语法合法、已选浏览器、优先级为合法非负整数
-- 规则 ID 生成规则：手动 `user_<pattern>_<unixnano>`；自动 `auto_<host>_<unixnano>`
+  - 新窗口打开（`open_in_new_window`）
+- 编辑时先设模式、再设 pattern，并在两者之间关闭自动推测——顺序反了会被自动推测覆盖掉原模式
+- 提交时校验（`ValidateRuleInput`）：pattern 非空、所选模式的语法合法、`urlequal` 必须带 `://`、`exact` 不得含 scheme 或路径、快捷方式不得含 `*`/`?`、不与既有规则完全重复
+- 校验失败与写盘失败都在表单顶部**就地显示红字**，不弹模态框，用户输入内容保持可见
+- 规则 ID 生成规则：手动 `user_<pattern>_<unixnano>`；自动 `auto_<host>_<unixnano>`。编辑时 ID 保持不变
 
-**当前不支持**：编辑已有规则、切换 `enabled`、调整优先级、展示 `comment`。需直接编辑 JSON。
+**窗口单例**：`settingsWin` 与 `ruleDialogWin` 两个包级变量各保证最多一个窗口。重复点击「添加规则」或连点不同规则的编辑按钮，只会保留最新那一个。设置窗口关闭或重载时一并关掉规则窗口，避免用旧数据误保存。
+
+**重新打开设置窗口时先重载磁盘数据**（`reloadConfigInto`）：就地赋值 `*cfg = *fresh`——选择器与设置窗口共享同一个 `*Config`，换指针只有一方看得到新数据。读盘失败或配置损坏时保留内存中现有值。
+
+**当前不支持**：切换 `enabled`、拖拽调整优先级、在列表里展示 `comment`、按 profile/无痕匹配。需直接编辑 JSON。
 
 ---
 
@@ -264,7 +314,7 @@ Browser Switch 是一款 macOS 桌面工具。注册为系统默认浏览器后�
 | **冷启动 500ms 判定** | 500ms 内收到 URL → 弹选择器；未收到 → 判定为用户主动打开 App → 显示设置窗口 | 系统负载高时 Apple Event 可能晚于 500ms 到达，导致设置窗口先闪现（见 [docs/ISSUES.md](docs/ISSUES.md) I-4） |
 | **`open -b <bundleID>` 启动浏览器** | 遵循 LaunchServices，最可靠；不加 `-n` 以复用已开窗口 | 无法传递 `--profile-directory` 等参数，故 profile 启动必须直接执行包内二进制 |
 | **profile 启动直执二进制** | `open -b` 在浏览器已运行时丢弃参数 | 绕过 LaunchServices，需自行解析 `CFBundleExecutable` |
-| **「记住选择」只记浏览器不记 profile** | 规则模型中无 profile 字段，避免为低频场景引入复杂度（YAGNI） | 多账户用户每次仍需选择账户 |
+| **「记住选择」连 profile 一起记** | 规则模型增加 `Rule.Profile`，命中时走 `LaunchBrowserProfile`。只记浏览器会让"选了无痕/子账号"的选择被静默丢弃 | 规则多一个字段；账户被删除后规则退化为默认账户打开 |
 | **图标缓存到 `/tmp`** | 免去缓存目录管理，系统重启自动清理 | 浏览器更新图标后不刷新（无失效判断） |
 | **配置字段先声明后使用** | 早期为托盘、窗口尺寸预留字段 | 现存 5 个死字段（违反 YAGNI，见 ISSUES I-9） |
 
@@ -284,6 +334,9 @@ Browser Switch 是一款 macOS 桌面工具。注册为系统默认浏览器后�
                 ├─ 点击普通卡片            → LaunchBrowser()
                 ├─ 点击/右键多 profile 卡片 → 账户菜单 → LaunchBrowserProfile()
                 ├─ ⌘N / 数字键             → LaunchBrowser(list[N-1])
+                ├─ ⌘R                      → 展开完整列表（同点击「更多」）
+                ├─ 点击地址栏               → 复制完整 URL
+                ├─ 点击齿轮                 → 暂停倒计时 + 打开设置
                 ├─ Enter                   → LaunchBrowser(default)
                 ├─ Esc                     → 关闭，不打开
                 └─ 倒计时归零              → LaunchBrowser(default)

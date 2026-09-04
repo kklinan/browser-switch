@@ -241,7 +241,7 @@ func handleURL(url string, cfg *Config) {
 	result := MatchURL(url, cfg)
 	if result.Matched && result.Browser != nil {
 		fmt.Printf(i18n.T("cli.output.rule_matched"), result.Rule.Pattern, result.Browser.Name)
-		if err := LaunchBrowser(*result.Browser, url); err == nil {
+		if err := launchForRule(url, result); err == nil {
 			return
 		}
 		fmt.Fprint(os.Stderr, i18n.T("cli.output.rule_fallback"))
@@ -258,7 +258,7 @@ func handleURL(url string, cfg *Config) {
 			}
 		}
 		if def != nil {
-			if err := LaunchBrowser(*def, url); err != nil {
+			if err := LaunchBrowser(*def, url, false); err != nil {
 				fmt.Fprintf(os.Stderr, i18n.T("cli.output.default_failed"), err)
 			}
 			return

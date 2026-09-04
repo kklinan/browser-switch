@@ -62,9 +62,11 @@ If you juggle multiple browsers or multiple browser accounts every day, macOS fo
 | Feature | Description |
 | ------- | ----------- |
 | 🎯 **URL interception** | Registers as the macOS `http`/`https` handler and receives URLs directly via Carbon Apple Events |
-| 📋 **Six rule modes** | Exact / wildcard / regex / contains / prefix / suffix, evaluated by descending priority |
-| 🖱️ **Card-based picker** | A grid of browser icons; more than 4 collapse behind a "More" card |
-| ⌨️ **Keyboard-first** | `⌘1`–`⌘9` or number keys open the Nth browser; `Enter` opens the default; `Esc` cancels |
+| 📋 **Seven rule modes** | Exact / full-URL-equal / wildcard / regex / contains / prefix / suffix, evaluated by descending priority |
+| 🖱️ **Card-based picker** | A grid of browser icons; more than 4 collapse behind a "More (⌘R)" card |
+| ⌨️ **Keyboard-first** | `⌘1`–`⌘9` or number keys open the Nth browser; `⌘R` expands the full list; `Enter` opens the default; `Esc` cancels |
+| 🪟 **New-window rules** | Any rule can force a link open in a brand-new window instead of reusing an existing one |
+| 📝 **Editable rules** | Rules can be edited in place, not just added and deleted |
 | ⏱️ **Countdown fallback** | After a configurable timeout (default 5s) it auto-opens the **default browser**, so links never hang |
 | 💾 **Remember choice** | Tick a box to auto-create an exact-match rule for that domain (priority 100) |
 | 👥 **Multi-profile support** | Auto-detects Chromium (Chrome/Edge/Brave/Vivaldi/Opera) and Firefox profiles, plus incognito |
@@ -184,10 +186,14 @@ browser-switch --version             # version info
 | Left-click a card | Open that browser; **if it has multiple profiles, an account menu appears** |
 | Right-click a card | Open the account menu (multi-profile browsers only) |
 | `⌘1`–`⌘9` / `1`–`9` | Open the Nth browser directly (uses the default profile) |
+| `⌘R` | Expand the full browser list — same as clicking the "More" card |
 | `Enter` | Open the default browser |
 | `Esc` | Cancel without opening anything |
+| Click the URL bar | Copy the full URL to the clipboard |
 | "Remember this domain" | Writes an `exact` rule for the current choice |
 | Gear / copy buttons | Open settings / copy the URL to the clipboard |
+
+Opening settings from the gear button **pauses the countdown**, so the picker no longer auto-opens a browser while you are editing rules.
 
 When the countdown reaches zero it uses the **default browser** (`default_browser` in the config), not whichever card is highlighted.
 
@@ -196,7 +202,7 @@ When the countdown reaches zero it uses the **default browser** (`default_browse
 Three tabs:
 
 - **Browsers** — left: favorites list (reorder / remove; order = ⌘N numbering); right: all browsers (favorite ♥ / hide 👁 / expand accounts / rescan)
-- **Rules** — all rules listed by descending priority; add and delete
+- **Rules** — all rules listed by descending priority; add, edit (✎) and delete; each rule can force **open in a new window**
 - **General** — language, default browser, auto-open delay, on-no-match action (show the picker, or open a specific browser directly), install/uninstall, "set another browser as system default"
 
 ---
@@ -206,15 +212,19 @@ Three tabs:
 | Mode | Matches against | Example |
 | ---- | --------------- | ------- |
 | `exact` | host equals pattern | `github.com` → only github.com, not sub.github.com |
-| `wildcard` | host, with `*` and `?` | `*.google.com` → mail.google.com |
+| `urlequal` | whole URL equals pattern | `https://github.com/a/b` → that URL only, not `?x=1` |
+| `wildcard` | host **or** full URL, with `*` and `?` | `*.google.com` → mail.google.com; `*/settings` → any settings page |
 | `regex` | host **or** full URL | `.*\.(test\|staging)\..*` |
 | `contains` | host **or** full URL substring | `login` → example.com/login |
-| `prefix` | host prefix | `dev.` → dev.example.com |
-| `suffix` | host suffix | `.cn` → example.cn |
+| `prefix` | host **or** full URL prefix | `dev.` → dev.example.com; `https://` → every secure link |
+| `suffix` | host **or** full URL suffix | `.cn` → example.cn; `.pdf` → every PDF link |
 
 - Rules are evaluated in **descending `priority`**; the first match wins.
 - Matching tries both the raw host and the host with `www.` stripped, so a rule for `example.com` also matches `www.example.com`.
+- `contains` / `prefix` / `suffix` are **shortcuts** for wildcard (`*p*` / `p*` / `*p`) for users who'd rather not write globs. They treat `*` and `?` as literal characters — the dialog blocks them at save time, since such a rule could never match.
+- Every mode except `exact` / `urlequal` matches against **both** the host and the full URL, so patterns that only appear in a path (`*/settings`) or a scheme (`https://`) work as expected.
 - "Remember choice" rules are fixed at priority `100`; manually added rules default to `50`.
+- Any rule can be set to **open in a new window**. Because Chrome, Edge and Safari are single-instance apps, this uses `--new-window` (Chromium/Firefox) or AppleScript (Safari) rather than `open -n`, which those apps silently ignore.
 
 Test any URL without opening a browser:
 
@@ -264,7 +274,8 @@ Config file: `~/.config/browser-switch/config.json` (auto-created on first run w
       "browser": "com.microsoft.edgemac",
       "priority": 100,
       "enabled": true,
-      "comment": "Work sites open in Edge"
+      "comment": "Work sites open in Edge",
+      "open_in_new_window": false
     }
   ],
   "auto_close_delay": 5,
